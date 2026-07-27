@@ -1,9 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp, API_BASE } from '../AppContext';
 import { 
-  Users, 
   Search, 
-  UserPlus, 
   Edit2, 
   Trash2, 
   UserX, 
@@ -28,6 +26,10 @@ export function AdminUsers() {
   const [editRole, setEditRole] = useState<'user' | 'admin'>('user');
   const [editDisabled, setEditDisabled] = useState(false);
   const [editPassword, setEditPassword] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editBloodGroup, setEditBloodGroup] = useState('');
+  const [editHomeAddress, setEditHomeAddress] = useState('');
+  const [editEmergencyNotes, setEditEmergencyNotes] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -81,6 +83,10 @@ export function AdminUsers() {
     setEditRole(user.role || 'user');
     setEditDisabled(!!user.disabled);
     setEditPassword('');
+    setEditPhone(user.phone || '');
+    setEditBloodGroup(user.bloodGroup || '');
+    setEditHomeAddress(user.homeAddress || '');
+    setEditEmergencyNotes(user.emergencyNotes || '');
     setErrorMsg(null);
   };
 
@@ -95,7 +101,11 @@ export function AdminUsers() {
         name: editName,
         email: editEmail,
         role: editRole,
-        disabled: editDisabled
+        disabled: editDisabled,
+        phone: editPhone,
+        bloodGroup: editBloodGroup,
+        homeAddress: editHomeAddress,
+        emergencyNotes: editEmergencyNotes
       };
       if (editPassword.trim() !== '') {
         updates.password = editPassword;
@@ -223,6 +233,23 @@ export function AdminUsers() {
                         <div className="min-w-0">
                           <span className="font-semibold block truncate text-textMain">{user.name}</span>
                           <span className="text-xs text-textMuted block truncate">{user.email}</span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {user.phone && (
+                              <span className="text-[10px] bg-black/40 text-textMuted px-1.5 py-0.5 rounded border border-surfaceHighlight">
+                                📞 {user.phone}
+                              </span>
+                            )}
+                            {user.bloodGroup && (
+                              <span className="text-[10px] bg-emergency/15 text-emergency px-1.5 py-0.5 rounded font-extrabold border border-emergency/30">
+                                🩸 {user.bloodGroup}
+                              </span>
+                            )}
+                            {user.homeAddress && (
+                              <span className="text-[10px] bg-black/40 text-textMuted px-1.5 py-0.5 rounded border border-surfaceHighlight truncate max-w-[140px]" title={user.homeAddress}>
+                                🏠 {user.homeAddress}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -384,6 +411,62 @@ export function AdminUsers() {
                     </label>
                   </div>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Phone */}
+                <div>
+                  <label className="block text-xs font-semibold text-textMuted uppercase tracking-wider mb-1">Mobile Phone</label>
+                  <input
+                    type="tel"
+                    placeholder="Mobile phone"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    className="w-full px-3 py-2.5 bg-black/40 border border-surfaceHighlight focus:border-emergency/50 rounded-xl text-sm text-textMain outline-none transition-all"
+                  />
+                </div>
+
+                {/* Blood Group */}
+                <div>
+                  <label className="block text-xs font-semibold text-textMuted uppercase tracking-wider mb-1">Blood Group</label>
+                  <select
+                    value={editBloodGroup}
+                    onChange={(e) => setEditBloodGroup(e.target.value)}
+                    className="w-full px-3 py-2.5 bg-black/40 border border-surfaceHighlight focus:border-emergency/50 rounded-xl text-sm text-textMain outline-none transition-all"
+                  >
+                    <option value="">Not Specified</option>
+                    <option value="A+">A+</option>
+                    <option value="A-">A-</option>
+                    <option value="B+">B+</option>
+                    <option value="B-">B-</option>
+                    <option value="O+">O+</option>
+                    <option value="O-">O-</option>
+                    <option value="AB+">AB+</option>
+                    <option value="AB-">AB-</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-textMuted uppercase tracking-wider mb-1">Primary Home Address</label>
+                <input
+                  type="text"
+                  placeholder="Primary address"
+                  value={editHomeAddress}
+                  onChange={(e) => setEditHomeAddress(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-black/40 border border-surfaceHighlight focus:border-emergency/50 rounded-xl text-sm text-textMain outline-none transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-textMuted uppercase tracking-wider mb-1">ICE Medical Cues / Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="Medical notes, allergies, pacemaker, etc."
+                  value={editEmergencyNotes}
+                  onChange={(e) => setEditEmergencyNotes(e.target.value)}
+                  className="w-full px-3 py-2 bg-black/40 border border-surfaceHighlight focus:border-emergency/50 rounded-xl text-xs text-textMain outline-none transition-all resize-none"
+                />
               </div>
 
               {/* Password update (Optional) */}

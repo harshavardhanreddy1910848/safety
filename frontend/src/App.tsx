@@ -9,6 +9,7 @@ import { Evidence } from './pages/Evidence';
 import { Contacts } from './pages/Contacts';
 import { History } from './pages/History';
 import { Settings } from './pages/Settings';
+import { FeedbackSupport } from './pages/FeedbackSupport';
 import { Receiver } from './pages/Receiver';
 import { Auth } from './pages/Auth';
 import { SetupPin } from './pages/SetupPin';
@@ -19,6 +20,7 @@ import { AdminLogin } from './pages/AdminLogin';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { AdminUsers } from './pages/AdminUsers';
 import { AdminAlerts } from './pages/AdminAlerts';
+import { AdminFeedback } from './pages/AdminFeedback';
 import { AdminSettings } from './pages/AdminSettings';
 
 // A wrapper to handle routing logic based on setup state and auth state
@@ -83,6 +85,7 @@ function AppContent() {
       <Route path="/admin/dashboard" element={<AdminDashboard />} />
       <Route path="/admin/users" element={<AdminUsers />} />
       <Route path="/admin/alerts" element={<AdminAlerts />} />
+      <Route path="/admin/feedback" element={<AdminFeedback />} />
       <Route path="/admin/settings" element={<AdminSettings />} />
 
       {/* User Application Pages */}
@@ -157,6 +160,16 @@ function AppContent() {
         <Navigate to="/onboarding" /> :
 
         <Settings />
+
+        } />
+
+      <Route
+        path="/feedback"
+        element={
+        !state.isSetupComplete ?
+        <Navigate to="/onboarding" /> :
+
+        <FeedbackSupport />
 
         } />
 

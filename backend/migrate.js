@@ -121,7 +121,11 @@ async function runMigration() {
         name VARCHAR(255),
         role VARCHAR(50),
         disabled BOOLEAN DEFAULT FALSE,
-        is_setup_complete BOOLEAN DEFAULT FALSE
+        is_setup_complete BOOLEAN DEFAULT FALSE,
+        phone_enc TEXT,
+        blood_group VARCHAR(20),
+        home_address TEXT,
+        emergency_notes TEXT
       )
     `);
 
@@ -165,6 +169,23 @@ async function runMigration() {
         evidence JSONB,
         contacts_notified JSONB,
         gps_path_enc TEXT
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS feedback (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+        user_name VARCHAR(255),
+        user_email VARCHAR(255),
+        type VARCHAR(50) DEFAULT 'feedback',
+        rating INTEGER DEFAULT 5,
+        subject VARCHAR(255),
+        message TEXT,
+        status VARCHAR(50) DEFAULT 'open',
+        admin_response TEXT DEFAULT '',
+        created_at BIGINT,
+        updated_at BIGINT
       )
     `);
     console.log('✅ PostgreSQL schema created successfully.');

@@ -38,7 +38,7 @@ type AppContextType = {
   register: (email: string, password: string, name: string) => Promise<void>;
   resetPassword: (email: string, password: string) => Promise<void>;
   logout: () => void;
-  updateUser: (name: string) => Promise<void>;
+  updateUser: (profile: string | { name?: string; phone?: string; bloodGroup?: string; homeAddress?: string; emergencyNotes?: string }) => Promise<void>;
   addContact: (contact: Contact) => Promise<void>;
   updateContact: (id: string, contact: Partial<Contact>) => Promise<void>;
   removeContact: (id: string) => Promise<void>;
@@ -199,6 +199,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setState({
           isSetupComplete: data.user.isSetupComplete,
           userName: data.user.name,
+          userPhone: data.user.phone || '',
+          userBloodGroup: data.user.bloodGroup || '',
+          userHomeAddress: data.user.homeAddress || '',
+          userEmergencyNotes: data.user.emergencyNotes || '',
           userRole: data.user.role || 'user',
           contacts: data.contacts,
           settings: data.settings,
@@ -289,8 +293,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState(initialState);
   };
 
-  const updateUser = async (name: string) => {
-    setState((s) => ({ ...s, userName: name }));
+  const updateUser = async (profile: string | { name?: string; phone?: string; bloodGroup?: string; homeAddress?: string; emergencyNotes?: string }) => {
+    const payload = typeof profile === 'string' ? { name: profile } : profile;
+    setState((s) => ({
+      ...s,
+      userName: payload.name !== undefined ? payload.name : s.userName,
+      userPhone: payload.phone !== undefined ? payload.phone : s.userPhone,
+      userBloodGroup: payload.bloodGroup !== undefined ? payload.bloodGroup : s.userBloodGroup,
+      userHomeAddress: payload.homeAddress !== undefined ? payload.homeAddress : s.userHomeAddress,
+      userEmergencyNotes: payload.emergencyNotes !== undefined ? payload.emergencyNotes : s.userEmergencyNotes
+    }));
+
     if (!token) return;
     try {
       await fetch(`${API_BASE}/user`, {
@@ -299,7 +312,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ name })
+        body: JSON.stringify(payload)
       });
     } catch (e) {
       console.error('Failed to update user profile:', e);

@@ -12,7 +12,8 @@ import {
   Bell, 
   Moon, 
   Sun,
-  UserCheck
+  UserCheck,
+  MessageSquare
 } from 'lucide-react';
 
 interface AdminLayoutProps {
@@ -72,6 +73,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
     { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/admin/users', label: 'User Management', icon: Users },
     { to: '/admin/alerts', label: 'Emergency Alerts', icon: ShieldAlert },
+    { to: '/admin/feedback', label: 'Feedback & Support', icon: MessageSquare },
     { to: '/admin/settings', label: 'System Settings', icon: Settings },
   ];
 

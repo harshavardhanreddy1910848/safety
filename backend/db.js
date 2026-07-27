@@ -119,7 +119,11 @@ function mapUserRow(row) {
     name: row.name,
     role: row.role || 'user',
     disabled: row.disabled === true || row.disabled === 1,
-    isSetupComplete: row.is_setup_complete === true || row.is_setup_complete === 1
+    isSetupComplete: row.is_setup_complete === true || row.is_setup_complete === 1,
+    phone: row.phone_enc ? decrypt(row.phone_enc) : '',
+    bloodGroup: row.blood_group || '',
+    homeAddress: row.home_address || '',
+    emergencyNotes: row.emergency_notes || ''
   };
 }
 
@@ -214,9 +218,18 @@ export async function initDb() {
       name VARCHAR(255),
       role VARCHAR(50),
       disabled BOOLEAN DEFAULT FALSE,
-      is_setup_complete BOOLEAN DEFAULT FALSE
+      is_setup_complete BOOLEAN DEFAULT FALSE,
+      phone_enc TEXT,
+      blood_group VARCHAR(20),
+      home_address TEXT,
+      emergency_notes TEXT
     )
   `);
+
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_enc TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS blood_group VARCHAR(20);`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS home_address TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS emergency_notes TEXT;`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contacts (
@@ -258,6 +271,23 @@ export async function initDb() {
       evidence JSONB,
       contacts_notified JSONB,
       gps_path_enc TEXT
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS feedback (
+      id VARCHAR(255) PRIMARY KEY,
+      user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+      user_name VARCHAR(255),
+      user_email VARCHAR(255),
+      type VARCHAR(50) DEFAULT 'feedback',
+      rating INTEGER DEFAULT 5,
+      subject VARCHAR(255),
+      message TEXT,
+      status VARCHAR(50) DEFAULT 'open',
+      admin_response TEXT DEFAULT '',
+      created_at BIGINT,
+      updated_at BIGINT
     )
   `);
 
@@ -367,10 +397,18 @@ export const db = {
   async updateUserProfile(userId, updates) {
     const keys = Object.keys(updates);
     if (keys.length === 0) return this.getUser(userId);
-    const pgKeys = keys.map(camelToSnake);
+
+    const dbUpdates = { ...updates };
+    if (updates.phone !== undefined) {
+      dbUpdates.phone_enc = updates.phone ? encrypt(updates.phone) : '';
+      delete dbUpdates.phone;
+    }
+
+    const setKeys = Object.keys(dbUpdates);
+    const pgKeys = setKeys.map(camelToSnake);
     const setClause = pgKeys.map((k, i) => `${k} = ?`).join(', ');
     const params = [
-      ...keys.map(k => updates[k]),
+      ...setKeys.map(k => dbUpdates[k]),
       userId
     ];
     await run(`UPDATE users SET ${setClause} WHERE id = ?`, params);
@@ -607,11 +645,15 @@ export const db = {
     const keys = Object.keys(updates);
     if (keys.length === 0) return this.getUser(userId);
 
-    // Filter password update specifically
+    // Filter password & phone update specifically
     const dbUpdates = { ...updates };
     if (updates.password) {
       dbUpdates.password_hash = hashPassword(updates.password);
       delete dbUpdates.password;
+    }
+    if (updates.phone !== undefined) {
+      dbUpdates.phone_enc = updates.phone ? encrypt(updates.phone) : '';
+      delete dbUpdates.phone;
     }
 
     const setKeys = Object.keys(dbUpdates);
@@ -658,6 +700,49 @@ export const db = {
       }
     }
     await run(`DELETE FROM history WHERE user_id = ?`, [userId]);
+    return true;
+  },
+
+  async addFeedback({ id, userId, userName, userEmail, type, rating, subject, message }) {
+    const feedbackId = id || `fb_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    const now = Date.now();
+    await run(
+      `INSERT INTO feedback (id, user_id, user_name, user_email, type, rating, subject, message, status, admin_response, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', '', ?, ?)`,
+      [feedbackId, userId, userName, userEmail, type || 'feedback', rating || 5, subject || '', message || '', now, now]
+    );
+    return this.getFeedbackById(feedbackId);
+  },
+
+  async getFeedbackById(id) {
+    return await get(`SELECT * FROM feedback WHERE id = ?`, [id]);
+  },
+
+  async getUserFeedback(userId) {
+    return await all(`SELECT * FROM feedback WHERE user_id = ? ORDER BY created_at DESC`, [userId]);
+  },
+
+  async getAllFeedback() {
+    return await all(`SELECT * FROM feedback ORDER BY created_at DESC`);
+  },
+
+  async updateFeedback(id, { status, adminResponse }) {
+    const now = Date.now();
+    const existing = await this.getFeedbackById(id);
+    if (!existing) throw new Error('Feedback ticket not found');
+
+    const newStatus = status !== undefined ? status : existing.status;
+    const newResponse = adminResponse !== undefined ? adminResponse : existing.admin_response;
+
+    await run(
+      `UPDATE feedback SET status = ?, admin_response = ?, updated_at = ? WHERE id = ?`,
+      [newStatus, newResponse, now, id]
+    );
+    return this.getFeedbackById(id);
+  },
+
+  async deleteFeedback(id) {
+    await run(`DELETE FROM feedback WHERE id = ?`, [id]);
     return true;
   }
 };

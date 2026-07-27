@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useApp } from '../AppContext';
 import {
   EyeOff,
@@ -10,13 +11,55 @@ import {
   Lock,
   CheckCircle2,
   ChevronRight,
-  X
+  X,
+  LifeBuoy,
+  User,
+  Save,
+  HeartPulse
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export function Settings() {
-  const { state, updateSettings, clearData, logout } = useApp();
+  const navigate = useNavigate();
+  const { state, updateUser, updateSettings, clearData, logout } = useApp();
   const [showFakeCall, setShowFakeCall] = useState(false);
+
+  // User Profile details state
+  const [profileName, setProfileName] = useState(state.userName);
+  const [profilePhone, setProfilePhone] = useState(state.userPhone || '');
+  const [profileBloodGroup, setProfileBloodGroup] = useState(state.userBloodGroup || '');
+  const [profileHomeAddress, setProfileHomeAddress] = useState(state.userHomeAddress || '');
+  const [profileEmergencyNotes, setProfileEmergencyNotes] = useState(state.userEmergencyNotes || '');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileSaveSuccess, setProfileSaveSuccess] = useState(false);
+
+  useEffect(() => {
+    setProfileName(state.userName || '');
+    setProfilePhone(state.userPhone || '');
+    setProfileBloodGroup(state.userBloodGroup || '');
+    setProfileHomeAddress(state.userHomeAddress || '');
+    setProfileEmergencyNotes(state.userEmergencyNotes || '');
+  }, [state.userName, state.userPhone, state.userBloodGroup, state.userHomeAddress, state.userEmergencyNotes]);
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingProfile(true);
+    try {
+      await updateUser({
+        name: profileName.trim(),
+        phone: profilePhone.trim(),
+        bloodGroup: profileBloodGroup,
+        homeAddress: profileHomeAddress.trim(),
+        emergencyNotes: profileEmergencyNotes.trim()
+      });
+      setProfileSaveSuccess(true);
+      setTimeout(() => setProfileSaveSuccess(false), 2000);
+    } catch (err) {
+      console.error('Failed to update profile:', err);
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
 
   // Change PIN modal states
   const [showChangePinModal, setShowChangePinModal] = useState(false);
@@ -160,6 +203,105 @@ export function Settings() {
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
 
       <div className="space-y-6">
+        {/* Personal & Emergency Profile */}
+        <section>
+          <h2 className="text-xs font-bold text-textMuted uppercase mb-3 flex items-center">
+            <User className="w-4 h-4 mr-2" /> Personal & Emergency Profile
+          </h2>
+          <form onSubmit={handleSaveProfile} className="bg-surface border border-surfaceHighlight rounded-xl p-4 space-y-4">
+            <div>
+              <label className="text-[10px] font-bold text-textMuted uppercase mb-1 block">Full Name</label>
+              <input
+                type="text"
+                value={profileName}
+                onChange={(e) => setProfileName(e.target.value)}
+                placeholder="Full Name"
+                className="w-full bg-background rounded-lg p-2.5 text-xs text-white outline-none focus:ring-1 focus:ring-safe border border-surfaceHighlight"
+              />
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-textMuted uppercase mb-1 block">Mobile Phone Number</label>
+              <input
+                type="tel"
+                value={profilePhone}
+                onChange={(e) => setProfilePhone(e.target.value)}
+                placeholder="Primary phone number"
+                className="w-full bg-background rounded-lg p-2.5 text-xs text-white outline-none focus:ring-1 focus:ring-safe border border-surfaceHighlight"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] font-bold text-textMuted uppercase mb-1 block flex items-center gap-1">
+                  <HeartPulse className="w-3 h-3 text-emergency" /> Blood Group
+                </label>
+                <select
+                  value={profileBloodGroup}
+                  onChange={(e) => setProfileBloodGroup(e.target.value)}
+                  className="w-full bg-background rounded-lg p-2.5 text-xs text-white outline-none focus:ring-1 focus:ring-safe border border-surfaceHighlight"
+                >
+                  <option value="">Select Blood Group</option>
+                  <option value="A+">A+</option>
+                  <option value="A-">A-</option>
+                  <option value="B+">B+</option>
+                  <option value="B-">B-</option>
+                  <option value="O+">O+</option>
+                  <option value="O-">O-</option>
+                  <option value="AB+">AB+</option>
+                  <option value="AB-">AB-</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-textMuted uppercase mb-1 block">Primary Address</label>
+                <input
+                  type="text"
+                  value={profileHomeAddress}
+                  onChange={(e) => setProfileHomeAddress(e.target.value)}
+                  placeholder="Home address"
+                  className="w-full bg-background rounded-lg p-2.5 text-xs text-white outline-none focus:ring-1 focus:ring-safe border border-surfaceHighlight"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-textMuted uppercase mb-1 block">ICE / Emergency Medical Notes</label>
+              <textarea
+                rows={2}
+                value={profileEmergencyNotes}
+                onChange={(e) => setProfileEmergencyNotes(e.target.value)}
+                placeholder="Medical conditions, allergies, or emergency response instructions..."
+                className="w-full bg-background rounded-lg p-2.5 text-xs text-white outline-none focus:ring-1 focus:ring-safe border border-surfaceHighlight resize-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              {profileSaveSuccess ? (
+                <span className="text-xs font-bold text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-4 h-4" /> Profile Details Saved!
+                </span>
+              ) : (
+                <span className="text-[10px] text-textMuted">Shared with responders during distress alerts</span>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSavingProfile}
+                className="px-4 py-2 bg-safe text-black font-bold text-xs rounded-xl hover:bg-safe/90 transition-colors flex items-center gap-1.5 shadow-md shadow-emerald-950/20"
+              >
+                {isSavingProfile ? (
+                  <div className="w-3.5 h-3.5 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <Save className="w-3.5 h-3.5" /> Save Profile
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </section>
+
         {/* Stealth & Disguise */}
         <section>
           <h2 className="text-xs font-bold text-textMuted uppercase mb-3 flex items-center">
@@ -302,6 +444,27 @@ export function Settings() {
               className="text-xs bg-surfaceHighlight px-4 py-2 border border-white/5 rounded-xl font-bold hover:bg-surfaceHighlight/80 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
             >
               Change PIN <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </section>
+
+        {/* Feedback & Support */}
+        <section>
+          <h2 className="text-xs font-bold text-textMuted uppercase mb-3 flex items-center">
+            <LifeBuoy className="w-4 h-4 mr-2" /> Help & Support
+          </h2>
+          <div className="bg-surface border border-surfaceHighlight rounded-xl p-4 flex items-center justify-between">
+            <div>
+              <p className="font-medium text-white">Feedback & Support Center</p>
+              <p className="text-xs text-textMuted">
+                Send feedback, technical tickets, & FAQs
+              </p>
+            </div>
+            <button
+              onClick={() => navigate('/feedback')}
+              className="text-xs bg-emergency text-white px-4 py-2 rounded-xl font-bold hover:bg-emergency/90 transition-colors cursor-pointer flex items-center gap-1.5 shadow-md shadow-emergency/20"
+            >
+              Get Help <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </section>

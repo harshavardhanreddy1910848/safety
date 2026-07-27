@@ -52,6 +52,10 @@ export type AlertEvent = {
 export type AppState = {
   isSetupComplete: boolean;
   userName: string;
+  userPhone?: string;
+  userBloodGroup?: string;
+  userHomeAddress?: string;
+  userEmergencyNotes?: string;
   userRole?: 'user' | 'admin';
   contacts: Contact[];
   settings: Settings;

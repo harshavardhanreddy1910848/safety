@@ -808,13 +808,17 @@ app.post('/api/user/setup-complete', async (req, res) => {
 
 app.post('/api/user', async (req, res) => {
   try {
-    const { name, password } = req.body;
+    const { name, password, phone, bloodGroup, homeAddress, emergencyNotes } = req.body;
     const updates = {};
     if (name !== undefined) updates.name = name;
+    if (phone !== undefined) updates.phone = phone;
+    if (bloodGroup !== undefined) updates.bloodGroup = bloodGroup;
+    if (homeAddress !== undefined) updates.homeAddress = homeAddress;
+    if (emergencyNotes !== undefined) updates.emergencyNotes = emergencyNotes;
     if (password !== undefined && password.trim() !== '') {
       updates.password = password;
     }
-    const user = await db.adminUpdateUser(req.userId, updates);
+    const user = await db.updateUserProfile(req.userId, updates);
     res.json(user);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -847,6 +851,42 @@ app.get('/api/settings', async (req, res) => {
 app.put('/api/settings', async (req, res) => {
   const settings = await db.updateSettings(req.userId, req.body);
   res.json(settings);
+});
+
+// Feedback & Support User APIs
+app.post('/api/feedback', async (req, res) => {
+  try {
+    const userId = req.userId;
+    const user = await db.getUser(userId);
+    const { type, rating, subject, message } = req.body;
+
+    if (!subject || !subject.trim() || !message || !message.trim()) {
+      return res.status(400).json({ error: 'Subject and message are required.' });
+    }
+
+    const item = await db.addFeedback({
+      userId,
+      userName: user ? user.name : 'Anonymous User',
+      userEmail: user ? user.email : 'Unknown Email',
+      type: type || 'feedback',
+      rating: rating || 5,
+      subject: subject.trim(),
+      message: message.trim()
+    });
+
+    res.json(item);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/feedback/my', async (req, res) => {
+  try {
+    const list = await db.getUserFeedback(req.userId);
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/alerts', async (req, res) => {
@@ -1223,13 +1263,17 @@ app.get('/api/admin/users', async (req, res) => {
 
 app.put('/api/admin/users/:id', async (req, res) => {
   try {
-    const { name, email, role, disabled, password } = req.body;
+    const { name, email, role, disabled, password, phone, bloodGroup, homeAddress, emergencyNotes } = req.body;
     const updates = {};
     if (name !== undefined) updates.name = name;
     if (email !== undefined) updates.email = email.toLowerCase();
     if (role !== undefined) updates.role = role;
     if (disabled !== undefined) updates.disabled = !!disabled;
     if (password !== undefined && password.trim() !== '') updates.password = password;
+    if (phone !== undefined) updates.phone = phone;
+    if (bloodGroup !== undefined) updates.bloodGroup = bloodGroup;
+    if (homeAddress !== undefined) updates.homeAddress = homeAddress;
+    if (emergencyNotes !== undefined) updates.emergencyNotes = emergencyNotes;
 
     const user = await db.adminUpdateUser(req.params.id, updates);
     res.json(user);
@@ -1339,6 +1383,35 @@ app.put('/api/admin/settings', async (req, res) => {
   try {
     const settings = await db.updateSettings('global', req.body);
     res.json(settings);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Admin Feedback & Support Management APIs
+app.get('/api/admin/feedback', async (req, res) => {
+  try {
+    const list = await db.getAllFeedback();
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/admin/feedback/:id', async (req, res) => {
+  try {
+    const { status, adminResponse } = req.body;
+    const updated = await db.updateFeedback(req.params.id, { status, adminResponse });
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/feedback/:id', async (req, res) => {
+  try {
+    await db.deleteFeedback(req.params.id);
+    res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

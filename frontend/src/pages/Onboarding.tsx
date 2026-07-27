@@ -20,6 +20,11 @@ export function Onboarding() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [name, setName] = useState(state.userName);
+  const [phone, setPhone] = useState(state.userPhone || '');
+  const [bloodGroup, setBloodGroup] = useState(state.userBloodGroup || '');
+  const [homeAddress, setHomeAddress] = useState(state.userHomeAddress || '');
+  const [emergencyNotes, setEmergencyNotes] = useState(state.userEmergencyNotes || '');
+
   const [newContact, setNewContact] = useState({
     name: '',
     phone: '',
@@ -92,7 +97,13 @@ export function Onboarding() {
 
   const handleNext = () => {
     if (step === 1 && name.trim()) {
-      updateUser(name);
+      updateUser({
+        name: name.trim(),
+        phone: phone.trim(),
+        bloodGroup,
+        homeAddress: homeAddress.trim(),
+        emergencyNotes: emergencyNotes.trim()
+      });
       setStep(2);
     } else if (step === 2) {
       setStep(3);
@@ -148,18 +159,80 @@ export function Onboarding() {
         className="flex-1"
       >
         {step === 1 && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-white">Who are you?</h2>
-            <p className="text-textMuted text-sm">
-              This name will be sent to your emergency contacts.
-            </p>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Your full name"
-              className="w-full bg-surface border border-surfaceHighlight rounded-xl p-4 text-lg focus:border-emergency focus:ring-1 focus:ring-emergency outline-none transition-all"
-            />
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-2xl font-bold text-white">Profile Details</h2>
+              <p className="text-textMuted text-xs mt-1">
+                Your emergency profile information shared with trusted contacts during an alert.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-textMuted uppercase mb-1 block">Full Name *</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Jane Doe"
+                  className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm text-white focus:border-emergency focus:ring-1 focus:ring-emergency outline-none transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-textMuted uppercase mb-1 block">Primary Mobile Phone</label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="e.g. +1 555-019-2834"
+                  className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm text-white focus:border-emergency focus:ring-1 focus:ring-emergency outline-none transition-all"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-textMuted uppercase mb-1 block">Blood Group</label>
+                  <select
+                    value={bloodGroup}
+                    onChange={(e) => setBloodGroup(e.target.value)}
+                    className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm text-white focus:border-emergency focus:ring-1 focus:ring-emergency outline-none transition-all"
+                  >
+                    <option value="">Select Blood Group</option>
+                    <option value="A+">A+</option>
+                    <option value="A-">A-</option>
+                    <option value="B+">B+</option>
+                    <option value="B-">B-</option>
+                    <option value="O+">O+</option>
+                    <option value="O-">O-</option>
+                    <option value="AB+">AB+</option>
+                    <option value="AB-">AB-</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-textMuted uppercase mb-1 block">Primary Address</label>
+                  <input
+                    type="text"
+                    value={homeAddress}
+                    onChange={(e) => setHomeAddress(e.target.value)}
+                    placeholder="Home / Work location"
+                    className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm text-white focus:border-emergency focus:ring-1 focus:ring-emergency outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-textMuted uppercase mb-1 block">Medical / ICE Emergency Notes</label>
+                <textarea
+                  rows={2}
+                  value={emergencyNotes}
+                  onChange={(e) => setEmergencyNotes(e.target.value)}
+                  placeholder="e.g. Asthma patient, allergic to penicillin, wears pacemaker"
+                  className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-xs text-white focus:border-emergency focus:ring-1 focus:ring-emergency outline-none transition-all resize-none"
+                />
+              </div>
+            </div>
           </div>
         )}
 

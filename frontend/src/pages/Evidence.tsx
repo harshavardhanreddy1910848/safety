@@ -155,25 +155,12 @@ export function Evidence() {
     });
   };
 
-  const totalMB = state.history.length * 12.5;
-  const storagePct = Math.min((totalMB / 1024) * 100, 100);
-
   return (
     <div className="flex flex-col h-full bg-background p-4 overflow-y-auto no-scrollbar pb-24">
-      <h1 className="text-2xl font-bold mb-5 text-white">Evidence Vault</h1>
-
-      {/* Storage bar */}
-      <div className="bg-surface p-4 rounded-xl border border-surfaceHighlight mb-5">
-        <div className="flex justify-between text-xs mb-2">
-          <span className="text-textMuted">Encrypted Storage</span>
-          <span className="font-medium text-white">{totalMB.toFixed(1)} MB / 1 GB</span>
-        </div>
-        <div className="w-full h-2 bg-surfaceHighlight rounded-full overflow-hidden">
-          <div className={`h-full transition-all ${storagePct > 90 ? 'bg-emergency' : 'bg-safe'}`}
-               style={{ width: `${storagePct}%` }} />
-        </div>
-        <div className="flex items-center gap-1.5 mt-2 text-[10px] text-safe">
-          <Lock className="w-3 h-3" /> AES-256 encrypted
+      <div className="flex items-center justify-between mb-5">
+        <h1 className="text-2xl font-bold text-white">Evidence Vault</h1>
+        <div className="flex items-center gap-1.5 text-xs text-safe bg-safe/10 border border-safe/20 px-3 py-1.5 rounded-full">
+          <Lock className="w-3.5 h-3.5" /> AES-256 Encrypted
         </div>
       </div>
 

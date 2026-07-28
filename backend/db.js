@@ -291,6 +291,17 @@ export async function initDb() {
     )
   `);
 
+  await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS user_name VARCHAR(255);`);
+  await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS user_email VARCHAR(255);`);
+  await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS type VARCHAR(50) DEFAULT 'feedback';`);
+  await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS rating INTEGER DEFAULT 5;`);
+  await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS subject VARCHAR(255);`);
+  await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS message TEXT;`);
+  await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'open';`);
+  await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS admin_response TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS created_at BIGINT;`);
+  await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS updated_at BIGINT;`);
+
   await seedAdmin();
 }
 

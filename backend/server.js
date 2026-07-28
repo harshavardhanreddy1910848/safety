@@ -126,50 +126,75 @@ async function dispatchEmail({ to, subject, html, attachments = [] }) {
     const fromName = "SilentSOS System";
     const fromAddress = resendSender.includes('<') ? resendSender : `${fromName} <${resendSender}>`;
 
-    const body = {
-      from: fromAddress,
-      to,
-      subject,
-      html
+    const testRecipient = process.env.RESEND_TEST_RECIPIENT || 'harshavardhanreddy1910848@gmail.com';
+
+    const sendViaResend = async (targetTo) => {
+      const isRerouted = targetTo.toLowerCase() !== to.toLowerCase();
+      const body = {
+        from: fromAddress,
+        to: targetTo,
+        subject: isRerouted ? `[Forwarded from ${to}] ${subject}` : subject,
+        html: isRerouted 
+          ? `<div style="padding:10px;background:#fff3cd;border:1px solid #ffeeba;color:#856404;border-radius:6px;margin-bottom:15px;font-size:12px;font-family:sans-serif;">⚠️ <strong>Resend Test Mode:</strong> Original recipient was <code>${to}</code>. Re-routed to your verified Resend account email (<code>${targetTo}</code>). To send directly to third-party recipients, verify a custom domain at <a href="https://resend.com/domains" style="color:#856404;text-decoration:underline;">resend.com/domains</a>.</div>${html}` 
+          : html
+      };
+
+      if (attachments && attachments.length > 0) {
+        body.attachments = attachments;
+      }
+
+      console.log(`✉️ Sending email via Resend API to ${targetTo}...`);
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Resend API error (${response.status}): ${errText}`);
+      }
+
+      return await response.json();
     };
 
-    if (attachments && attachments.length > 0) {
-      body.attachments = attachments;
+    try {
+      const data = await sendViaResend(to);
+      console.log(`✉️ Email successfully sent via Resend API to ${to} (ID: ${data.id})`);
+      return data;
+    } catch (err) {
+      if (err.message.includes('403') && (err.message.includes('testing emails') || err.message.includes('validation_error'))) {
+        console.warn(`⚠️ Resend test mode restriction hit for target ${to}. Automatically re-routing email to verified account (${testRecipient})...`);
+        try {
+          const fallbackData = await sendViaResend(testRecipient);
+          console.log(`✉️ Email successfully re-routed & delivered via Resend API to ${testRecipient} (ID: ${fallbackData.id})`);
+          return fallbackData;
+        } catch (fallbackErr) {
+          console.warn(`⚠️ Resend fallback failed: ${fallbackErr.message}. Attempting SMTP/Ethereal fallback...`);
+        }
+      } else {
+        console.warn(`⚠️ Resend error: ${err.message}. Trying SMTP fallback...`);
+      }
     }
-
-    console.log(`✉️ Sending email via Resend API to ${to}...`);
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${resendApiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Resend API error (${response.status}): ${errText}`);
-    }
-
-    const data = await response.json();
-    console.log(`✉️ Email successfully sent via Resend API to ${to} (ID: ${data.id})`);
-    return data;
-  } else {
-    const transporter = await getMailTransporter();
-    if (!transporter) {
-      throw new Error('Mail transporter not initialized');
-    }
-    const info = await transporter.sendMail({
-      from: `"SilentSOS System" <${transporter.options.auth.user}>`,
-      to,
-      subject,
-      html,
-      attachments
-    });
-    console.log(`✉️ Email successfully sent via SMTP to ${to} (MessageID: ${info.messageId})`);
-    return info;
   }
+
+  // Fallback to Nodemailer SMTP
+  const transporter = await getMailTransporter();
+  if (!transporter) {
+    throw new Error('Mail transporter not initialized');
+  }
+  const info = await transporter.sendMail({
+    from: `"SilentSOS System" <${transporter.options.auth.user}>`,
+    to,
+    subject,
+    html,
+    attachments
+  });
+  console.log(`✉️ Email successfully sent via SMTP to ${to} (MessageID: ${info.messageId})`);
+  return info;
 }
 
 // Sends alert notification email to emergency contacts

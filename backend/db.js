@@ -25,7 +25,7 @@ const connectionConfig = process.env.DATABASE_URL
       ssl: { rejectUnauthorized: false }
     };
 
-const pool = new pg.Pool(connectionConfig);
+export const pool = new pg.Pool(connectionConfig);
 
 pool.on('error', (err) => {
   console.error('Unexpected error on idle PostgreSQL client:', err);
@@ -34,31 +34,6 @@ pool.on('error', (err) => {
 // Helper to convert camelCase to snake_case for dynamic update properties
 function camelToSnake(str) {
   return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
-}
-
-// Helper to convert SQLite style ? to PostgreSQL style $1, $2, $3...
-function convertPlaceholders(sql) {
-  let index = 1;
-  return sql.replace(/\?/g, () => `$${index++}`);
-}
-
-// PG Wrapper queries mimicking standard SQLite methods
-async function run(sql, params = []) {
-  const pgSql = convertPlaceholders(sql);
-  const result = await pool.query(pgSql, params);
-  return { changes: result.rowCount };
-}
-
-async function get(sql, params = []) {
-  const pgSql = convertPlaceholders(sql);
-  const result = await pool.query(pgSql, params);
-  return result.rows[0] || null;
-}
-
-async function all(sql, params = []) {
-  const pgSql = convertPlaceholders(sql);
-  const result = await pool.query(pgSql, params);
-  return result.rows;
 }
 
 // AES-256-CBC encryption key (32 bytes)
@@ -90,7 +65,7 @@ function decrypt(text) {
   }
 }
 
-// Simple password hashing
+// Password hashing
 function hashPassword(password) {
   return crypto.createHash('sha256').update(password).digest('hex');
 }
@@ -118,8 +93,8 @@ function mapUserRow(row) {
     email: row.email,
     name: row.name,
     role: row.role || 'user',
-    disabled: row.disabled === true || row.disabled === 1,
-    isSetupComplete: row.is_setup_complete === true || row.is_setup_complete === 1,
+    disabled: row.disabled === true,
+    isSetupComplete: row.is_setup_complete === true,
     phone: row.phone_enc ? decrypt(row.phone_enc) : '',
     bloodGroup: row.blood_group || '',
     homeAddress: row.home_address || '',
@@ -136,8 +111,8 @@ function mapSettingsRow(row) {
     videoDuration: row.video_duration || '1min',
     audioQuality: row.audio_quality || 'high',
     cameraPreference: row.camera_preference || 'both',
-    fakeCallDisguise: row.fake_call_disguise === true || row.fake_call_disguise === 1,
-    stealthMode: row.stealth_mode === true || row.stealth_mode === 1,
+    fakeCallDisguise: row.fake_call_disguise === true,
+    stealthMode: row.stealth_mode === true,
     messageTemplate: row.message_template || defaultSettings.messageTemplate,
     safetyPin: row.safety_pin || '1234',
     autoDeleteDays: row.auto_delete_days !== undefined && row.auto_delete_days !== null ? row.auto_delete_days : 30,
@@ -209,7 +184,6 @@ function mapHistoryRow(row) {
 
 // Database schema table setup
 export async function initDb() {
-  // Setup tables if they do not exist
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id VARCHAR(255) PRIMARY KEY,
@@ -306,20 +280,20 @@ export async function initDb() {
 }
 
 async function seedAdmin() {
-  const adminRow = await get(`SELECT COUNT(*) as count FROM users WHERE role = 'admin'`);
-  if (!adminRow || parseInt(adminRow.count) === 0) {
+  const adminRes = await pool.query(`SELECT COUNT(*) as count FROM users WHERE role = 'admin'`);
+  if (!adminRes.rows[0] || parseInt(adminRes.rows[0].count) === 0) {
     const adminId = 'admin-system';
-    await run(
+    await pool.query(
       `INSERT INTO users (id, email, password_hash, name, role, disabled, is_setup_complete) 
-       VALUES (?, ?, ?, ?, ?, false, true) ON CONFLICT (id) DO NOTHING`,
+       VALUES ($1, $2, $3, $4, $5, false, true) ON CONFLICT (id) DO NOTHING`,
       [adminId, 'admin@silentsos.com', hashPassword('admin123'), 'System Administrator', 'admin']
     );
-    await run(
+    await pool.query(
       `INSERT INTO settings (
         user_id, gesture_sensitivity, auto_repeat_interval, photo_burst_count, 
         video_duration, audio_quality, camera_preference, fake_call_disguise, 
         stealth_mode, message_template, safety_pin, auto_delete_days, global_emergency_emails
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, false, false, ?, ?, ?, '') ON CONFLICT (user_id) DO NOTHING`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, false, false, $8, $9, $10, '') ON CONFLICT (user_id) DO NOTHING`,
       [
         adminId,
         defaultSettings.gestureSensitivity,
@@ -336,34 +310,34 @@ async function seedAdmin() {
     console.log('✉️ Seeded default admin account: admin@silentsos.com (pwd: admin123)');
   }
 
-  const userToPromote = await get(`SELECT * FROM users WHERE LOWER(email) = ?`, ['harshavardhanreddy1910848@gmail.com']);
-  if (userToPromote && userToPromote.role !== 'admin') {
-    await run(`UPDATE users SET role = 'admin' WHERE LOWER(email) = ?`, ['harshavardhanreddy1910848@gmail.com']);
+  const userToPromoteRes = await pool.query(`SELECT * FROM users WHERE LOWER(email) = $1`, ['harshavardhanreddy1910848@gmail.com']);
+  if (userToPromoteRes.rows[0] && userToPromoteRes.rows[0].role !== 'admin') {
+    await pool.query(`UPDATE users SET role = 'admin' WHERE LOWER(email) = $1`, ['harshavardhanreddy1910848@gmail.com']);
     console.log('✉️ Automatically promoted harshavardhanreddy1910848@gmail.com to administrator');
   }
 }
 
-// Exported Database methods
+// Exported Pure PostgreSQL Database methods
 export const db = {
   // Authentication methods
   async registerUser(email, password, name) {
-    const existing = await get(`SELECT id FROM users WHERE LOWER(email) = ?`, [email.toLowerCase()]);
-    if (existing) {
+    const existingRes = await pool.query(`SELECT id FROM users WHERE LOWER(email) = $1`, [email.toLowerCase()]);
+    if (existingRes.rows.length > 0) {
       throw new Error('User already exists');
     }
     const userId = Date.now().toString();
     const hash = hashPassword(password);
     
-    await run(
-      `INSERT INTO users (id, email, password_hash, name, role, disabled, is_setup_complete) VALUES (?, ?, ?, ?, 'user', false, false)`,
+    await pool.query(
+      `INSERT INTO users (id, email, password_hash, name, role, disabled, is_setup_complete) VALUES ($1, $2, $3, $4, 'user', false, false)`,
       [userId, email.toLowerCase(), hash, name || '']
     );
-    await run(
+    await pool.query(
       `INSERT INTO settings (
         user_id, gesture_sensitivity, auto_repeat_interval, photo_burst_count, 
         video_duration, audio_quality, camera_preference, fake_call_disguise, 
         stealth_mode, message_template, safety_pin, auto_delete_days, global_emergency_emails
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, false, false, ?, ?, ?, '')`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, false, false, $8, $9, $10, '')`,
       [
         userId,
         defaultSettings.gestureSensitivity,
@@ -381,28 +355,28 @@ export const db = {
   },
 
   async authenticateUser(email, password) {
-    const row = await get(
-      `SELECT * FROM users WHERE LOWER(email) = ? AND password_hash = ?`,
+    const res = await pool.query(
+      `SELECT * FROM users WHERE LOWER(email) = $1 AND password_hash = $2`,
       [email.toLowerCase(), hashPassword(password)]
     );
-    if (!row) {
+    if (!res.rows[0]) {
       throw new Error('Invalid email or password');
     }
-    return mapUserRow(row);
+    return mapUserRow(res.rows[0]);
   },
 
   async resetPassword(email, newPassword) {
-    const user = await get(`SELECT id FROM users WHERE LOWER(email) = ?`, [email.toLowerCase()]);
-    if (!user) {
+    const userRes = await pool.query(`SELECT id FROM users WHERE LOWER(email) = $1`, [email.toLowerCase()]);
+    if (!userRes.rows[0]) {
       throw new Error('User with this email does not exist');
     }
-    await run(`UPDATE users SET password_hash = ? WHERE LOWER(email) = ?`, [hashPassword(newPassword), email.toLowerCase()]);
-    return this.getUser(user.id);
+    await pool.query(`UPDATE users SET password_hash = $1 WHERE LOWER(email) = $2`, [hashPassword(newPassword), email.toLowerCase()]);
+    return this.getUser(userRes.rows[0].id);
   },
 
   async getUser(userId) {
-    const row = await get(`SELECT * FROM users WHERE id = ?`, [userId]);
-    return mapUserRow(row);
+    const res = await pool.query(`SELECT * FROM users WHERE id = $1`, [userId]);
+    return mapUserRow(res.rows[0]);
   },
 
   async updateUserProfile(userId, updates) {
@@ -417,19 +391,19 @@ export const db = {
 
     const setKeys = Object.keys(dbUpdates);
     const pgKeys = setKeys.map(camelToSnake);
-    const setClause = pgKeys.map((k, i) => `${k} = ?`).join(', ');
+    const setClause = pgKeys.map((k, i) => `${k} = $${i + 1}`).join(', ');
     const params = [
       ...setKeys.map(k => dbUpdates[k]),
       userId
     ];
-    await run(`UPDATE users SET ${setClause} WHERE id = ?`, params);
+    await pool.query(`UPDATE users SET ${setClause} WHERE id = $${setKeys.length + 1}`, params);
     return this.getUser(userId);
   },
 
   // Contacts
   async getContacts(userId) {
-    const rows = await all(`SELECT * FROM contacts WHERE user_id = ?`, [userId]);
-    return rows.map(mapContactRow);
+    const res = await pool.query(`SELECT * FROM contacts WHERE user_id = $1`, [userId]);
+    return res.rows.map(mapContactRow);
   },
 
   async addContact(userId, contact) {
@@ -438,15 +412,16 @@ export const db = {
     const emailEnc = encrypt(contact.email);
     const prefStr = JSON.stringify(contact.preferences || {});
 
-    await run(
-      `INSERT INTO contacts (id, user_id, name, phone_enc, email_enc, preferences) VALUES (?, ?, ?, ?, ?, ?)`,
+    await pool.query(
+      `INSERT INTO contacts (id, user_id, name, phone_enc, email_enc, preferences) VALUES ($1, $2, $3, $4, $5, $6)`,
       [contactId, userId, contact.name, phoneEnc, emailEnc, prefStr]
     );
     return this.getContacts(userId);
   },
 
   async updateContact(userId, contactId, updates) {
-    const row = await get(`SELECT * FROM contacts WHERE id = ? AND user_id = ?`, [contactId, userId]);
+    const res = await pool.query(`SELECT * FROM contacts WHERE id = $1 AND user_id = $2`, [contactId, userId]);
+    const row = res.rows[0];
     if (!row) return this.getContacts(userId);
 
     const name = updates.name !== undefined ? updates.name : row.name;
@@ -460,21 +435,22 @@ export const db = {
       preferences = JSON.stringify(row.preferences);
     }
 
-    await run(
-      `UPDATE contacts SET name = ?, phone_enc = ?, email_enc = ?, preferences = ? WHERE id = ? AND user_id = ?`,
+    await pool.query(
+      `UPDATE contacts SET name = $1, phone_enc = $2, email_enc = $3, preferences = $4 WHERE id = $5 AND user_id = $6`,
       [name, phoneEnc, emailEnc, preferences, contactId, userId]
     );
     return this.getContacts(userId);
   },
 
   async removeContact(userId, contactId) {
-    await run(`DELETE FROM contacts WHERE id = ? AND user_id = ?`, [contactId, userId]);
+    await pool.query(`DELETE FROM contacts WHERE id = $1 AND user_id = $2`, [contactId, userId]);
     return this.getContacts(userId);
   },
 
   // Settings
   async getSettings(userId) {
-    const row = await get(`SELECT * FROM settings WHERE user_id = ?`, [userId]);
+    const res = await pool.query(`SELECT * FROM settings WHERE user_id = $1`, [userId]);
+    const row = res.rows[0];
     if (!row) {
       return { ...defaultSettings };
     }
@@ -482,15 +458,16 @@ export const db = {
   },
 
   async updateSettings(userId, updates) {
-    const current = await get(`SELECT * FROM settings WHERE user_id = ?`, [userId]);
+    const currentRes = await pool.query(`SELECT * FROM settings WHERE user_id = $1`, [userId]);
+    const current = currentRes.rows[0];
     const merged = { ...defaultSettings, ...mapSettingsRow(current), ...updates };
 
-    await run(
+    await pool.query(
       `INSERT INTO settings (
         user_id, gesture_sensitivity, auto_repeat_interval, photo_burst_count, 
         video_duration, audio_quality, camera_preference, fake_call_disguise, 
         stealth_mode, message_template, safety_pin, auto_delete_days, global_emergency_emails
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT (user_id) DO UPDATE SET
          gesture_sensitivity = EXCLUDED.gesture_sensitivity,
          auto_repeat_interval = EXCLUDED.auto_repeat_interval,
@@ -525,8 +502,8 @@ export const db = {
 
   // History
   async getHistory(userId) {
-    const rows = await all(`SELECT * FROM history WHERE user_id = ? ORDER BY timestamp DESC`, [userId]);
-    return rows.map(mapHistoryRow);
+    const res = await pool.query(`SELECT * FROM history WHERE user_id = $1 ORDER BY timestamp DESC`, [userId]);
+    return res.rows.map(mapHistoryRow);
   },
 
   async addHistoryEvent(userId, event) {
@@ -534,9 +511,9 @@ export const db = {
     const notifyStr = JSON.stringify(event.contactsNotified || []);
     const gpsPathEnc = encrypt(JSON.stringify(event.gpsPath || []));
 
-    await run(
+    await pool.query(
       `INSERT INTO history (id, user_id, timestamp, type, duration_seconds, status, evidence, contacts_notified, gps_path_enc) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         event.id, 
         userId, 
@@ -553,7 +530,8 @@ export const db = {
   },
 
   async removeHistoryEvent(userId, alertId) {
-    const row = await get(`SELECT evidence FROM history WHERE id = ? AND user_id = ?`, [alertId, userId]);
+    const res = await pool.query(`SELECT evidence FROM history WHERE id = $1 AND user_id = $2`, [alertId, userId]);
+    const row = res.rows[0];
     if (row && row.evidence) {
       try {
         let evidence = row.evidence;
@@ -577,12 +555,13 @@ export const db = {
       } catch (e) {}
     }
 
-    await run(`DELETE FROM history WHERE id = ? AND user_id = ?`, [alertId, userId]);
+    await pool.query(`DELETE FROM history WHERE id = $1 AND user_id = $2`, [alertId, userId]);
     return this.getHistory(userId);
   },
 
   async updateHistoryEvent(alertId, updates) {
-    const row = await get(`SELECT * FROM history WHERE id = ?`, [alertId]);
+    const res = await pool.query(`SELECT * FROM history WHERE id = $1`, [alertId]);
+    const row = res.rows[0];
     if (!row) return;
 
     const durationSeconds = updates.durationSeconds !== undefined ? updates.durationSeconds : row.duration_seconds;
@@ -604,18 +583,18 @@ export const db = {
 
     const gpsPathEnc = updates.gpsPath ? encrypt(JSON.stringify(updates.gpsPath)) : row.gps_path_enc;
 
-    await run(
-      `UPDATE history SET duration_seconds = ?, status = ?, evidence = ?, contacts_notified = ?, gps_path_enc = ? WHERE id = ?`,
+    await pool.query(
+      `UPDATE history SET duration_seconds = $1, status = $2, evidence = $3, contacts_notified = $4, gps_path_enc = $5 WHERE id = $6`,
       [durationSeconds, status, evidence, contactsNotified, gpsPathEnc, alertId]
     );
   },
 
   async clearUserData(userId) {
-    await run(`DELETE FROM contacts WHERE user_id = ?`, [userId]);
+    await pool.query(`DELETE FROM contacts WHERE user_id = $1`, [userId]);
     
     // Clean files from history before deleting rows
-    const rows = await all(`SELECT evidence FROM history WHERE user_id = ?`, [userId]);
-    for (const row of rows) {
+    const res = await pool.query(`SELECT evidence FROM history WHERE user_id = $1`, [userId]);
+    for (const row of res.rows) {
       if (row.evidence) {
         try {
           let evidence = row.evidence;
@@ -637,26 +616,25 @@ export const db = {
       }
     }
     
-    await run(`DELETE FROM history WHERE user_id = ?`, [userId]);
-    await run(`DELETE FROM settings WHERE user_id = ?`, [userId]);
-    await run(`UPDATE users SET is_setup_complete = false WHERE id = ?`, [userId]);
+    await pool.query(`DELETE FROM history WHERE user_id = $1`, [userId]);
+    await pool.query(`DELETE FROM settings WHERE user_id = $1`, [userId]);
+    await pool.query(`UPDATE users SET is_setup_complete = false WHERE id = $1`, [userId]);
   },
 
   async getAllHistory() {
-    const rows = await all(`SELECT * FROM history ORDER BY timestamp DESC`);
-    return rows.map(mapHistoryRow);
+    const res = await pool.query(`SELECT * FROM history ORDER BY timestamp DESC`);
+    return res.rows.map(mapHistoryRow);
   },
 
   async getAllUsers() {
-    const rows = await all(`SELECT * FROM users`);
-    return rows.map(mapUserRow);
+    const res = await pool.query(`SELECT * FROM users`);
+    return res.rows.map(mapUserRow);
   },
 
   async adminUpdateUser(userId, updates) {
     const keys = Object.keys(updates);
     if (keys.length === 0) return this.getUser(userId);
 
-    // Filter password & phone update specifically
     const dbUpdates = { ...updates };
     if (updates.password) {
       dbUpdates.password_hash = hashPassword(updates.password);
@@ -669,27 +647,23 @@ export const db = {
 
     const setKeys = Object.keys(dbUpdates);
     const pgKeys = setKeys.map(camelToSnake);
-    const setClause = pgKeys.map((k, i) => `${k} = ?`).join(', ');
+    const setClause = pgKeys.map((k, i) => `${k} = $${i + 1}`).join(', ');
     const params = [
       ...setKeys.map(k => dbUpdates[k]),
       userId
     ];
 
-    await run(`UPDATE users SET ${setClause} WHERE id = ?`, params);
+    await pool.query(`UPDATE users SET ${setClause} WHERE id = $${setKeys.length + 1}`, params);
     return this.getUser(userId);
   },
 
   async deleteUser(userId) {
-    // 1. Delete user record
-    await run(`DELETE FROM users WHERE id = ?`, [userId]);
-    // 2. Delete settings
-    await run(`DELETE FROM settings WHERE user_id = ?`, [userId]);
-    // 3. Delete contacts
-    await run(`DELETE FROM contacts WHERE user_id = ?`, [userId]);
+    await pool.query(`DELETE FROM users WHERE id = $1`, [userId]);
+    await pool.query(`DELETE FROM settings WHERE user_id = $1`, [userId]);
+    await pool.query(`DELETE FROM contacts WHERE user_id = $1`, [userId]);
     
-    // 4. Delete evidence files and history
-    const rows = await all(`SELECT evidence FROM history WHERE user_id = ?`, [userId]);
-    for (const row of rows) {
+    const res = await pool.query(`SELECT evidence FROM history WHERE user_id = $1`, [userId]);
+    for (const row of res.rows) {
       if (row.evidence) {
         try {
           let evidence = row.evidence;
@@ -710,31 +684,34 @@ export const db = {
         } catch (e) {}
       }
     }
-    await run(`DELETE FROM history WHERE user_id = ?`, [userId]);
+    await pool.query(`DELETE FROM history WHERE user_id = $1`, [userId]);
     return true;
   },
 
   async addFeedback({ id, userId, userName, userEmail, type, rating, subject, message }) {
     const feedbackId = id || `fb_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     const now = Date.now();
-    await run(
+    await pool.query(
       `INSERT INTO feedback (id, user_id, user_name, user_email, type, rating, subject, message, status, admin_response, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', '', ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'open', '', $9, $10)`,
       [feedbackId, userId, userName, userEmail, type || 'feedback', rating || 5, subject || '', message || '', now, now]
     );
     return this.getFeedbackById(feedbackId);
   },
 
   async getFeedbackById(id) {
-    return await get(`SELECT * FROM feedback WHERE id = ?`, [id]);
+    const res = await pool.query(`SELECT * FROM feedback WHERE id = $1`, [id]);
+    return res.rows[0] || null;
   },
 
   async getUserFeedback(userId) {
-    return await all(`SELECT * FROM feedback WHERE user_id = ? ORDER BY created_at DESC`, [userId]);
+    const res = await pool.query(`SELECT * FROM feedback WHERE user_id = $1 ORDER BY created_at DESC`, [userId]);
+    return res.rows;
   },
 
   async getAllFeedback() {
-    return await all(`SELECT * FROM feedback ORDER BY created_at DESC`);
+    const res = await pool.query(`SELECT * FROM feedback ORDER BY created_at DESC`);
+    return res.rows;
   },
 
   async updateFeedback(id, { status, adminResponse }) {
@@ -745,15 +722,15 @@ export const db = {
     const newStatus = status !== undefined ? status : existing.status;
     const newResponse = adminResponse !== undefined ? adminResponse : existing.admin_response;
 
-    await run(
-      `UPDATE feedback SET status = ?, admin_response = ?, updated_at = ? WHERE id = ?`,
+    await pool.query(
+      `UPDATE feedback SET status = $1, admin_response = $2, updated_at = $3 WHERE id = $4`,
       [newStatus, newResponse, now, id]
     );
     return this.getFeedbackById(id);
   },
 
   async deleteFeedback(id) {
-    await run(`DELETE FROM feedback WHERE id = ?`, [id]);
+    await pool.query(`DELETE FROM feedback WHERE id = $1`, [id]);
     return true;
   }
 };

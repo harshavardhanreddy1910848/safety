@@ -71,24 +71,9 @@ The platform has been migrated permanently from SQLite to **PostgreSQL**.
 
 ---
 
-## Database Migration (SQLite to PostgreSQL)
+## Database Schema & Architecture
 
-If you are migrating existing data from an older SQLite installation:
-
-1. Ensure your SQLite database file (`database.db`) is located at `backend/data/database.db`.
-2. Configure your target PostgreSQL connection details in `backend/.env`.
-3. Temporarily install the sqlite3 package:
-   ```bash
-   npm install sqlite3 --no-save
-   ```
-4. Run the programmatic migration script:
-   ```bash
-   node backend/migrate.js
-   ```
-5. Prune/remove the SQLite dependency when finished:
-   ```bash
-   npm uninstall sqlite3
-   ```
+SilentSOS operates using **100% Native PostgreSQL** (`pg` pool connection) as the single source of truth across all environments.
 
 ---
 

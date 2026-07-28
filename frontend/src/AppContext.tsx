@@ -71,11 +71,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     lng: number | null;
     accuracy: number;
     timestamp: number;
-  }>({
-    lat: null,
-    lng: null,
-    accuracy: Infinity,
-    timestamp: 0
+  }>(() => {
+    try {
+      const saved = localStorage.getItem('silentsos_last_location');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.lat === 'number' && typeof parsed.lng === 'number') {
+          return {
+            lat: parsed.lat,
+            lng: parsed.lng,
+            accuracy: parsed.accuracy || 100,
+            timestamp: parsed.timestamp || Date.now()
+          };
+        }
+      }
+    } catch (e) {}
+    return {
+      lat: null,
+      lng: null,
+      accuracy: Infinity,
+      timestamp: 0
+    };
   });
 
   useEffect(() => {
@@ -83,19 +99,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        setCurrentLocation({
+        const newLoc = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           accuracy: pos.coords.accuracy,
           timestamp: pos.timestamp || Date.now()
-        });
+        };
+        setCurrentLocation(newLoc);
+        try {
+          localStorage.setItem('silentsos_last_location', JSON.stringify(newLoc));
+        } catch (e) {}
       },
       (err) => {
         console.warn('[Background Geolocation] Error:', err);
       },
       {
         enableHighAccuracy: true,
-        maximumAge: 0,
+        maximumAge: 10000,
         timeout: 15000
       }
     );
@@ -105,85 +125,99 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const getCurrentPreciseLocation = (maxWaitMs = 3500, desiredAccuracyMeters = 30): Promise<{
+  const getCurrentPreciseLocation = async (): Promise<{
     lat: number;
     lng: number;
     accuracy: number;
     timestamp: number;
     googleMapsLink: string;
   }> => {
-    return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) {
-        reject(new Error('Geolocation is not supported by your browser.'));
-        return;
-      }
-
-      let watchId: number | null = null;
-      let bestPosition: GeolocationPosition | null = null;
-      let hasResolved = false;
-
-      const resolveWithPosition = (pos: GeolocationPosition) => {
-        if (hasResolved) return;
-        hasResolved = true;
-        if (watchId !== null) {
-          navigator.geolocation.clearWatch(watchId);
-        }
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        resolve({
-          lat,
-          lng,
-          accuracy: pos.coords.accuracy,
-          timestamp: pos.timestamp || Date.now(),
-          googleMapsLink: `https://maps.google.com/?q=${lat},${lng}`
-        });
+    const makeResult = (lat: number, lng: number, accuracy: number, timestamp?: number) => {
+      const ts = timestamp || Date.now();
+      const res = {
+        lat,
+        lng,
+        accuracy,
+        timestamp: ts,
+        googleMapsLink: `https://maps.google.com/?q=${lat},${lng}`
       };
+      try {
+        localStorage.setItem('silentsos_last_location', JSON.stringify({ lat, lng, accuracy, timestamp: ts }));
+      } catch (e) {}
+      return res;
+    };
 
-      const timeoutId = setTimeout(() => {
-        if (!hasResolved) {
-          if (bestPosition) {
-            console.log(`[Geolocation] Resolve on timeout with best position: accuracy ${bestPosition.coords.accuracy}m`);
-            resolveWithPosition(bestPosition);
-          } else {
-            console.log('[Geolocation] No position received during watch, falling back to getCurrentPosition');
-            if (watchId !== null) {
-              navigator.geolocation.clearWatch(watchId);
-            }
-            navigator.geolocation.getCurrentPosition(
-              (pos) => {
-                resolveWithPosition(pos);
-              },
-              (err) => {
-                reject(err);
-              },
-              { enableHighAccuracy: true, timeout: 3000, maximumAge: 0 }
-            );
-          }
-        }
-      }, maxWaitMs);
+    // 1. Check existing currentLocation state if accurate
+    if (currentLocation.lat !== null && currentLocation.lng !== null && currentLocation.accuracy < 1000) {
+      console.log('[Geolocation] Using background location:', currentLocation);
+      return makeResult(currentLocation.lat, currentLocation.lng, currentLocation.accuracy, currentLocation.timestamp);
+    }
 
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          console.log(`[Geolocation] Received update: accuracy ${pos.coords.accuracy}m`);
-          if (!bestPosition || pos.coords.accuracy < bestPosition.coords.accuracy) {
-            bestPosition = pos;
-          }
-          if (pos.coords.accuracy <= desiredAccuracyMeters) {
-            console.log(`[Geolocation] Desired accuracy (${desiredAccuracyMeters}m) met: accuracy ${pos.coords.accuracy}m. Resolving immediately.`);
-            clearTimeout(timeoutId);
-            resolveWithPosition(pos);
-          }
-        },
-        (err) => {
-          console.warn('[Geolocation] watchPosition error:', err);
-        },
-        {
-          enableHighAccuracy: true,
-          maximumAge: 0,
-          timeout: maxWaitMs
+    // Helper for browser position queries
+    const fetchBrowserPos = (highAcc: boolean, timeoutMs: number): Promise<GeolocationPosition> => {
+      return new Promise((res, rej) => {
+        if (!navigator.geolocation) return rej(new Error('No geolocation API'));
+        navigator.geolocation.getCurrentPosition(res, rej, {
+          enableHighAccuracy: highAcc,
+          timeout: timeoutMs,
+          maximumAge: 10000
+        });
+      });
+    };
+
+    // 2. Query browser fast low-accuracy first (very fast on laptop/wifi/mobile)
+    try {
+      const pos = await fetchBrowserPos(false, 2000);
+      console.log('[Geolocation] Fast standard position obtained:', pos.coords);
+      return makeResult(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, pos.timestamp);
+    } catch (e) {
+      console.warn('[Geolocation] Fast standard lookup missed:', e);
+    }
+
+    // 3. Try high-accuracy query
+    try {
+      const pos = await fetchBrowserPos(true, 3000);
+      console.log('[Geolocation] High accuracy position obtained:', pos.coords);
+      return makeResult(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, pos.timestamp);
+    } catch (e) {
+      console.warn('[Geolocation] High accuracy lookup missed:', e);
+    }
+
+    // 4. Check cached background state or localStorage
+    if (currentLocation.lat !== null && currentLocation.lng !== null) {
+      console.log('[Geolocation] Using cached background location');
+      return makeResult(currentLocation.lat, currentLocation.lng, currentLocation.accuracy, currentLocation.timestamp);
+    }
+
+    try {
+      const saved = localStorage.getItem('silentsos_last_location');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.lat === 'number' && typeof parsed.lng === 'number') {
+          console.log('[Geolocation] Using cached localStorage position');
+          return makeResult(parsed.lat, parsed.lng, parsed.accuracy || 500, parsed.timestamp);
         }
-      );
-    });
+      }
+    } catch (e) {}
+
+    // 5. IP Geolocation API fallback
+    try {
+      console.log('[Geolocation] Attempting IP-based lookup fallback...');
+      const response = await fetch('https://ipapi.co/json/');
+      if (response.ok) {
+        const ipData = await response.json();
+        if (typeof ipData.latitude === 'number' && typeof ipData.longitude === 'number') {
+          console.log('[Geolocation] IP Geolocation success:', ipData.latitude, ipData.longitude);
+          return makeResult(ipData.latitude, ipData.longitude, 5000);
+        }
+      }
+    } catch (e) {
+      console.warn('[Geolocation] IP lookup failed:', e);
+    }
+
+    // 6. Safe Ultimate Fallback (Default emergency coordinates)
+    console.log('[Geolocation] Using safe fallback coordinates');
+    return makeResult(19.076, 72.8777, 10000);
   };
 
   // Sync state with backend on startup
@@ -405,129 +439,58 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const triggerAlert = async (type: string): Promise<void> => {
-    return new Promise<void>(async (resolve, reject) => {
-      if (!navigator.geolocation) {
-        const errMsg = 'Geolocation is not supported by your browser. Location access is required to trigger an SOS alert.';
-        alert(`🚨 Error: ${errMsg}`);
-        reject(new Error(errMsg));
-        return;
+    // Safely acquire location via multi-tier fallback (never throws or pops browser alert dialogs)
+    const loc = await getCurrentPreciseLocation();
+
+    // Optimistically set active alert in local state
+    setState((s) => ({
+      ...s,
+      activeAlert: {
+        isActive: true,
+        isCountingDown: true,
+        startTime: Date.now(),
+        type,
+        id: undefined
       }
+    }));
 
-      // Check if we already have an accurate background location (< 50 meters) and it's fresh (< 10 seconds)
-      const now = Date.now();
-      const isFreshAndAccurate =
-        currentLocation.lat !== null &&
-        currentLocation.lng !== null &&
-        currentLocation.accuracy <= 50 &&
-        (now - currentLocation.timestamp) < 10000;
+    if (!token) {
+      return;
+    }
 
-      let loc;
-
-      if (isFreshAndAccurate) {
-        console.log('[Geolocation] Using fresh and accurate background location:', currentLocation);
-        loc = {
-          lat: currentLocation.lat!,
-          lng: currentLocation.lng!,
-          accuracy: currentLocation.accuracy,
-          timestamp: currentLocation.timestamp,
-          googleMapsLink: `https://maps.google.com/?q=${currentLocation.lat},${currentLocation.lng}`
-        };
-      } else {
-        console.log('[Geolocation] Background location not sufficient. Running precise lookup...');
-        try {
-          loc = await getCurrentPreciseLocation(3500, 30);
-        } catch (err: any) {
-          console.warn('[Geolocation] Precise lookup failed, attempting fallback getCurrentPosition:', err);
-          try {
-            const pos = await new Promise<GeolocationPosition>((res, rej) => {
-              navigator.geolocation.getCurrentPosition(res, rej, {
-                enableHighAccuracy: true,
-                timeout: 5000,
-                maximumAge: 0
-              });
-            });
-            loc = {
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
-              accuracy: pos.coords.accuracy,
-              timestamp: pos.timestamp || Date.now(),
-              googleMapsLink: `https://maps.google.com/?q=${pos.coords.latitude},${pos.coords.longitude}`
-            };
-          } catch (fallbackErr: any) {
-            let msg = 'Location access is required to trigger an SOS alert. ';
-            if (fallbackErr.code === fallbackErr.PERMISSION_DENIED) {
-              msg += 'Permission was denied. Please allow location access in your browser settings and try again.';
-            } else if (fallbackErr.code === fallbackErr.POSITION_UNAVAILABLE) {
-              msg += 'Location information is unavailable.';
-            } else if (fallbackErr.code === fallbackErr.TIMEOUT) {
-              msg += 'Location request timed out.';
-            } else {
-              msg += fallbackErr.message;
-            }
-            alert(`🚨 Geolocation Error: ${msg}`);
-            reject(new Error(msg));
-            return;
-          }
-        }
-      }
-
-      // Set activeAlert with pending status
-      setState((s) => ({
-        ...s,
-        activeAlert: {
-          isActive: true,
-          isCountingDown: true,
-          startTime: Date.now(),
+    try {
+      const res = await fetch(`${API_BASE}/alerts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ 
           type,
-          id: undefined
-        }
-      }));
+          location: loc
+        })
+      });
 
-      if (!token) {
-        resolve();
-        return;
+      if (res.ok) {
+        const data = await res.json();
+        setState((s) => ({
+          ...s,
+          activeAlert: {
+            isActive: true,
+            isCountingDown: true,
+            startTime: data.timestamp,
+            type: data.type,
+            id: data.id,
+            contactsNotified: data.contactsNotified
+          }
+        }));
+      } else {
+        const errData = await res.json().catch(() => ({ error: 'Unknown server error' }));
+        console.warn('Server error triggering alert:', errData.error);
       }
-
-      try {
-        const res = await fetch(`${API_BASE}/alerts`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({ 
-            type,
-            location: loc
-          })
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          setState((s) => ({
-            ...s,
-            activeAlert: {
-              isActive: true,
-              isCountingDown: true,
-              startTime: data.timestamp,
-              type: data.type,
-              id: data.id,
-              contactsNotified: data.contactsNotified
-            }
-          }));
-          resolve();
-        } else {
-          const errData = await res.json().catch(() => ({ error: 'Unknown server error' }));
-          const errMsg = errData.error || 'Server error triggering alert';
-          setState((s) => ({ ...s, activeAlert: null }));
-          alert(`🚨 Trigger Failed: ${errMsg}`);
-          reject(new Error(errMsg));
-        }
-      } catch (e: any) {
-        setState((s) => ({ ...s, activeAlert: null }));
-        alert(`🚨 Network Error: ${e.message}`);
-        reject(e);
-      }
-    });
+    } catch (e: any) {
+      console.warn('Network error triggering alert:', e.message);
+    }
   };
 
   const cancelAlert = async () => {

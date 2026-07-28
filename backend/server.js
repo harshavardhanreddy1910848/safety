@@ -118,70 +118,67 @@ async function getMailTransporter() {
   return mailTransporter;
 }
 
-// Sends email using either Resend HTTP API or Nodemailer SMTP depending on configuration
+// Sends email using direct SMTP (Gmail) or Resend API depending on configuration
 async function dispatchEmail({ to, subject, html, attachments = [] }) {
+  // 1. Direct production SMTP transport (Gmail) - sends to any emergency recipient without test mode restrictions
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    try {
+      const transporter = await getMailTransporter();
+      if (transporter) {
+        console.log(`✉️ Sending email via SMTP to ${to}...`);
+        const info = await transporter.sendMail({
+          from: `"SilentSOS System" <${transporter.options.auth.user}>`,
+          to,
+          subject,
+          html,
+          attachments
+        });
+        console.log(`✉️ Email successfully sent via SMTP to ${to} (MessageID: ${info.messageId})`);
+        return info;
+      }
+    } catch (smtpErr) {
+      console.warn(`⚠️ SMTP send failed to ${to}: ${smtpErr.message}. Trying HTTP API fallback...`);
+    }
+  }
+
+  // 2. Resend API HTTP fallback if configured
   if (process.env.RESEND_API_KEY) {
     const resendApiKey = process.env.RESEND_API_KEY;
     const resendSender = process.env.RESEND_SENDER || 'onboarding@resend.dev';
     const fromName = "SilentSOS System";
     const fromAddress = resendSender.includes('<') ? resendSender : `${fromName} <${resendSender}>`;
 
-    const testRecipient = process.env.RESEND_TEST_RECIPIENT || 'harshavardhanreddy1910848@gmail.com';
-
-    const sendViaResend = async (targetTo) => {
-      const isRerouted = targetTo.toLowerCase() !== to.toLowerCase();
-      const body = {
-        from: fromAddress,
-        to: targetTo,
-        subject: isRerouted ? `[Forwarded from ${to}] ${subject}` : subject,
-        html: isRerouted 
-          ? `<div style="padding:10px;background:#fff3cd;border:1px solid #ffeeba;color:#856404;border-radius:6px;margin-bottom:15px;font-size:12px;font-family:sans-serif;">⚠️ <strong>Resend Test Mode:</strong> Original recipient was <code>${to}</code>. Re-routed to your verified Resend account email (<code>${targetTo}</code>). To send directly to third-party recipients, verify a custom domain at <a href="https://resend.com/domains" style="color:#856404;text-decoration:underline;">resend.com/domains</a>.</div>${html}` 
-          : html
-      };
-
-      if (attachments && attachments.length > 0) {
-        body.attachments = attachments;
-      }
-
-      console.log(`✉️ Sending email via Resend API to ${targetTo}...`);
+    try {
+      console.log(`✉️ Sending email via Resend API to ${to}...`);
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${resendApiKey}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify({
+          from: fromAddress,
+          to,
+          subject,
+          html,
+          attachments
+        })
       });
 
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Resend API error (${response.status}): ${errText}`);
-      }
-
-      return await response.json();
-    };
-
-    try {
-      const data = await sendViaResend(to);
-      console.log(`✉️ Email successfully sent via Resend API to ${to} (ID: ${data.id})`);
-      return data;
-    } catch (err) {
-      if (err.message.includes('403') && (err.message.includes('testing emails') || err.message.includes('validation_error'))) {
-        console.warn(`⚠️ Resend test mode restriction hit for target ${to}. Automatically re-routing email to verified account (${testRecipient})...`);
-        try {
-          const fallbackData = await sendViaResend(testRecipient);
-          console.log(`✉️ Email successfully re-routed & delivered via Resend API to ${testRecipient} (ID: ${fallbackData.id})`);
-          return fallbackData;
-        } catch (fallbackErr) {
-          console.warn(`⚠️ Resend fallback failed: ${fallbackErr.message}. Attempting SMTP/Ethereal fallback...`);
-        }
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`✉️ Email successfully sent via Resend API to ${to} (ID: ${data.id})`);
+        return data;
       } else {
-        console.warn(`⚠️ Resend error: ${err.message}. Trying SMTP fallback...`);
+        const errText = await response.text();
+        console.warn(`⚠️ Resend API error (${response.status}): ${errText}`);
       }
+    } catch (resendErr) {
+      console.warn(`⚠️ Resend API request failed: ${resendErr.message}`);
     }
   }
 
-  // Fallback to Nodemailer SMTP
+  // 3. Ethereal Test SMTP fallback
   const transporter = await getMailTransporter();
   if (!transporter) {
     throw new Error('Mail transporter not initialized');
@@ -193,7 +190,7 @@ async function dispatchEmail({ to, subject, html, attachments = [] }) {
     html,
     attachments
   });
-  console.log(`✉️ Email successfully sent via SMTP to ${to} (MessageID: ${info.messageId})`);
+  console.log(`✉️ Email successfully sent via fallback transport to ${to} (MessageID: ${info.messageId})`);
   return info;
 }
 

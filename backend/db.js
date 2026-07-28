@@ -10,25 +10,18 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
-// Initialize PostgreSQL Connection Pool
-const connectionConfig = process.env.DATABASE_URL
-  ? {
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.DATABASE_URL.includes('sslmode=') ? undefined : { rejectUnauthorized: false }
-    }
-  : {
-      host: process.env.PGHOST || 'localhost',
-      port: parseInt(process.env.PGPORT || '5432'),
-      user: process.env.PGUSER || 'postgres',
-      password: process.env.PGPASSWORD || 'postgres',
-      database: process.env.PGDATABASE || 'silentsos',
-      ssl: { rejectUnauthorized: false }
-    };
+// Initialize Neon PostgreSQL Connection Pool (Exclusive Cloud Database)
+const databaseUrl = process.env.DATABASE_URL || 'postgresql://neondb_owner:npg_4wbWrnqgNc3V@ep-cool-grass-aorbu4fo-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require';
+
+const connectionConfig = {
+  connectionString: databaseUrl,
+  ssl: { rejectUnauthorized: false }
+};
 
 export const pool = new pg.Pool(connectionConfig);
 
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle PostgreSQL client:', err);
+  console.error('Unexpected error on idle Neon PostgreSQL client:', err);
 });
 
 // Helper to convert camelCase to snake_case for dynamic update properties

@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Capacitor } from '@capacitor/core';
-import { Geolocation } from '@capacitor/geolocation';
 
 type LocationState = {
   lat: number | null;
@@ -20,10 +18,9 @@ export function useGeolocation() {
   });
 
   useEffect(() => {
-    let watchId: any = null;
-    const isNative = Capacitor.isNativePlatform();
+    let watchId: number | null = null;
 
-    const handleSuccess = (pos: any) => {
+    const handleSuccess = (pos: GeolocationPosition) => {
       setLocation({
         lat: pos.coords.latitude,
         lng: pos.coords.longitude,
@@ -33,7 +30,7 @@ export function useGeolocation() {
       });
     };
 
-    const handleError = (error: any) => {
+    const handleError = (error: { message?: string; code?: number }) => {
       let msg = error.message || 'Location error';
       setLocation({
         lat: null,
@@ -44,112 +41,47 @@ export function useGeolocation() {
       });
     };
 
-    const startWatching = async () => {
-      if (isNative) {
-        try {
-          watchId = await Geolocation.watchPosition(
-            {
-              enableHighAccuracy: true,
-              timeout: 15000,
-              maximumAge: 0
-            },
-            (pos, err) => {
-              if (pos) {
-                handleSuccess(pos);
-              } else if (err) {
-                handleError(err);
-              }
-            }
-          );
-        } catch (err: any) {
-          handleError(err);
-        }
-      } else {
-        if (!navigator.geolocation) {
-          setLocation({
-            lat: null,
-            lng: null,
-            accuracy: 0,
-            timestamp: Date.now(),
-            error: 'Geolocation is not supported by your browser.'
-          });
-          return;
-        }
-
-        watchId = navigator.geolocation.watchPosition(
-          (pos) => handleSuccess({ coords: pos.coords, timestamp: pos.timestamp }),
-          (err) => {
-            let msg = err.message;
-            if (err.code === err.PERMISSION_DENIED) {
-              msg = 'Location permission denied. Please allow location access in your browser settings.';
-            } else if (err.code === err.POSITION_UNAVAILABLE) {
-              msg = 'Location information is unavailable.';
-            } else if (err.code === err.TIMEOUT) {
-              msg = 'Location request timed out.';
-            }
-            handleError({ message: msg });
-          },
-          {
-            enableHighAccuracy: true,
-            timeout: 15000,
-            maximumAge: 0
-          }
-        );
+    const startWatching = () => {
+      if (!navigator.geolocation) {
+        setLocation({
+          lat: null,
+          lng: null,
+          accuracy: 0,
+          timestamp: Date.now(),
+          error: 'Geolocation is not supported by your browser.'
+        });
+        return;
       }
+
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => handleSuccess(pos),
+        (err) => {
+          let msg = err.message;
+          if (err.code === err.PERMISSION_DENIED) {
+            msg = 'Location permission denied. Please allow location access in your browser settings.';
+          } else if (err.code === err.POSITION_UNAVAILABLE) {
+            msg = 'Location information is unavailable.';
+          } else if (err.code === err.TIMEOUT) {
+            msg = 'Location request timed out.';
+          }
+          handleError({ message: msg });
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0
+        }
+      );
     };
 
     const checkPermissionAndStart = async () => {
-      if (isNative) {
-        try {
-          const status = await Geolocation.checkPermissions();
-          if (status.location === 'granted') {
-            startWatching();
-          } else {
-            const req = await Geolocation.requestPermissions();
-            if (req.location === 'granted') {
-              startWatching();
-            } else {
-              setLocation({
-                lat: null,
-                lng: null,
-                accuracy: 0,
-                timestamp: Date.now(),
-                error: 'Location permission denied natively.'
-              });
-            }
-          }
-        } catch (err: any) {
-          setLocation({
-            lat: null,
-            lng: null,
-            accuracy: 0,
-            timestamp: Date.now(),
-            error: err.message || 'Permission check failed'
-          });
-        }
-      } else {
-        try {
-          if (navigator.permissions && navigator.permissions.query) {
-            const status = await navigator.permissions.query({ name: 'geolocation' });
-            
-            const handlePermissionChange = () => {
-              if (status.state === 'denied') {
-                if (watchId) navigator.geolocation.clearWatch(watchId);
-                setLocation({
-                  lat: null,
-                  lng: null,
-                  accuracy: 0,
-                  timestamp: Date.now(),
-                  error: 'Location access denied in browser settings.'
-                });
-              } else {
-                startWatching();
-              }
-            };
-
-            status.onchange = handlePermissionChange;
-
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          const status = await navigator.permissions.query({ name: 'geolocation' });
+          
+          const handlePermissionChange = () => {
             if (status.state === 'denied') {
+              if (watchId !== null) navigator.geolocation.clearWatch(watchId);
               setLocation({
                 lat: null,
                 lng: null,
@@ -160,12 +92,26 @@ export function useGeolocation() {
             } else {
               startWatching();
             }
+          };
+
+          status.onchange = handlePermissionChange;
+
+          if (status.state === 'denied') {
+            setLocation({
+              lat: null,
+              lng: null,
+              accuracy: 0,
+              timestamp: Date.now(),
+              error: 'Location access denied in browser settings.'
+            });
           } else {
             startWatching();
           }
-        } catch (err) {
+        } else {
           startWatching();
         }
+      } catch (err) {
+        startWatching();
       }
     };
 
@@ -173,11 +119,7 @@ export function useGeolocation() {
 
     return () => {
       if (watchId !== null) {
-        if (isNative) {
-          Geolocation.clearWatch({ id: watchId });
-        } else {
-          navigator.geolocation.clearWatch(watchId);
-        }
+        navigator.geolocation.clearWatch(watchId);
       }
     };
   }, []);

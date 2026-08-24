@@ -4,14 +4,12 @@ import { useApp } from '../AppContext';
 import {
   EyeOff,
   PhoneCall,
-  Trash2,
   MessageSquare,
   LogOut,
   Lock,
   CheckCircle2,
   ChevronRight,
   X,
-  LifeBuoy,
   User,
   Save,
   HeartPulse,
@@ -22,20 +20,17 @@ import {
   Camera,
   Video,
   Sliders,
-  AlertTriangle,
   Sparkles,
   KeyRound,
-  BatteryCharging,
-  Info
+  BatteryCharging
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export function Settings() {
   const navigate = useNavigate();
   const { state, updateUser, updateSettings, clearData, logout } = useApp();
-  const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'capture' | 'system'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'capture'>('profile');
   const [showFakeCall, setShowFakeCall] = useState(false);
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // User Profile details state
   const [profileName, setProfileName] = useState(state.userName);
@@ -186,11 +181,6 @@ export function Settings() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showChangePinModal, pinPhase, enteredPin, firstNewPin]);
 
-  const handleClearData = () => {
-    clearData();
-    window.location.reload();
-  };
-
   // Fake Call simulation screen
   if (showFakeCall) {
     return (
@@ -239,9 +229,20 @@ export function Settings() {
           </h1>
           <p className="text-xs text-textMuted mt-0.5">Manage distress alerts, responder profiles, and system security</p>
         </div>
-        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          System Operational
+        <div className="flex items-center gap-2">
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            System Operational
+          </div>
+          <button
+            onClick={() => {
+              logout();
+              window.location.reload();
+            }}
+            className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5 text-warning" /> Log Out
+          </button>
         </div>
       </div>
 
@@ -287,13 +288,12 @@ export function Settings() {
         </div>
       </div>
 
-      {/* Modern Navigation Tabs */}
-      <div className="grid grid-cols-4 gap-1.5 p-1.5 bg-[#141418] border border-white/5 rounded-2xl mb-6">
+      {/* Modern Navigation Tabs (3 Tabs) */}
+      <div className="grid grid-cols-3 gap-1.5 p-1.5 bg-[#141418] border border-white/5 rounded-2xl mb-6">
         {[
           { id: 'profile', label: 'Profile & ICE', icon: User },
           { id: 'security', label: 'Security & Stealth', icon: Lock },
-          { id: 'capture', label: 'Capture & SOS', icon: Camera },
-          { id: 'system', label: 'Help & System', icon: LifeBuoy }
+          { id: 'capture', label: 'Capture & SOS', icon: Camera }
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -301,7 +301,7 @@ export function Settings() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`relative py-3 px-2 rounded-xl flex flex-col sm:flex-row items-center justify-center gap-1.5 text-xs font-bold transition-all ${
+              className={`relative py-3 px-2 rounded-xl flex flex-col sm:flex-row items-center justify-center gap-1.5 text-xs font-bold transition-all cursor-pointer ${
                 isActive
                   ? 'bg-gradient-to-r from-rose-600 to-rose-700 text-white shadow-lg shadow-rose-950/40'
                   : 'text-textMuted hover:text-white hover:bg-white/[0.03]'
@@ -715,129 +715,7 @@ export function Settings() {
           </motion.div>
         )}
 
-        {/* ======================================================== */}
-        {/* TAB 4: HELP & SYSTEM                                     */}
-        {/* ======================================================== */}
-        {activeTab === 'system' && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.2 }}
-            className="space-y-4"
-          >
-            {/* Help & Support Hub Gateway */}
-            <div className="bg-gradient-to-r from-rose-950/30 to-[#141418] border border-white/10 rounded-2xl p-5 shadow-xl flex items-center justify-between gap-4">
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center shrink-0">
-                  <LifeBuoy className="w-6 h-6 text-rose-400" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-white text-sm sm:text-base">Support & Feedback Ticket Hub</h3>
-                  <p className="text-xs text-textMuted mt-1 leading-relaxed max-w-md">
-                    Submit bug reports, feature requests, or message the safety moderation support team.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                onClick={() => navigate('/feedback')}
-                className="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl transition-all shrink-0 shadow-md shadow-rose-950/40 cursor-pointer flex items-center gap-1.5"
-              >
-                Open Support <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {/* System Info Banner */}
-            <div className="bg-[#141418] border border-white/10 rounded-2xl p-4 flex items-center justify-between text-xs text-textMuted">
-              <div className="flex items-center gap-2">
-                <Info className="w-4 h-4 text-sky-400" />
-                <span>SilentSOS Core Version 1.0.0 (PostgreSQL Cloud Synchronized)</span>
-              </div>
-              <span className="font-mono text-[10px] text-white/50">BUILD 2026.08</span>
-            </div>
-
-            {/* Logout Session */}
-            <div className="bg-[#141418] border border-white/10 rounded-2xl p-5 shadow-xl flex items-center justify-between gap-4">
-              <div>
-                <h3 className="font-bold text-white text-sm">Account Session</h3>
-                <p className="text-xs text-textMuted mt-0.5">End active session on this device</p>
-              </div>
-
-              <button
-                onClick={() => {
-                  logout();
-                  window.location.reload();
-                }}
-                className="px-4 py-2.5 bg-white/10 hover:bg-white/15 border border-white/10 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-2"
-              >
-                <LogOut className="w-4 h-4 text-warning" /> Log Out
-              </button>
-            </div>
-
-            {/* Danger Zone */}
-            <div className="bg-rose-950/20 border border-rose-500/20 rounded-2xl p-5 shadow-xl flex items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-rose-500" />
-                  <h3 className="font-bold text-rose-400 text-sm">Danger Zone</h3>
-                </div>
-                <p className="text-xs text-textMuted mt-1 leading-relaxed max-w-md">
-                  Permanently clear local distress history, contacts, and account preferences.
-                </p>
-              </div>
-
-              <button
-                onClick={() => setShowResetConfirm(true)}
-                className="px-4 py-2.5 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-400 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" /> Reset App Data
-              </button>
-            </div>
-          </motion.div>
-        )}
       </div>
-
-      {/* Confirmation Modal for Reset App Data */}
-      <AnimatePresence>
-        {showResetConfirm && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-          >
-            <motion.div
-              initial={{ scale: 0.95 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.95 }}
-              className="bg-[#18181f] border border-rose-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-center"
-            >
-              <div className="w-14 h-14 rounded-full bg-rose-500/20 text-rose-500 mx-auto flex items-center justify-center">
-                <AlertTriangle className="w-7 h-7" />
-              </div>
-              <h3 className="text-lg font-bold text-white">Reset All Application Data?</h3>
-              <p className="text-xs text-textMuted leading-relaxed">
-                This will delete your emergency contacts, stored distress history, and local preferences permanently. This action cannot be undone.
-              </p>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => setShowResetConfirm(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-white/10 text-white text-xs font-bold hover:bg-white/15 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleClearData}
-                  className="flex-1 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-500 transition-colors shadow-lg shadow-rose-950/40 cursor-pointer"
-                >
-                  Yes, Reset Everything
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Change PIN Modal Overlay */}
       <AnimatePresence>

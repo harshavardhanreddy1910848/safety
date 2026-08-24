@@ -14,6 +14,11 @@ import {
   Camera,
   MapPin,
   Bell,
+  KeyRound,
+  ArrowLeft,
+  CheckCircle2,
+  RefreshCw,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -105,17 +110,32 @@ const features = [
    Main Auth component
 ───────────────────────────────────────────── */
 export function Auth() {
-  const { login, register, resetPassword } = useApp();
+  const { login, register, sendResetOtp, verifyResetOtp } = useApp();
   const [showIntro, setShowIntro] = useState(true);
   const [isLogin, setIsLogin] = useState(true);
   const [isForgot, setIsForgot] = useState(false);
+  const [forgotStep, setForgotStep] = useState<'email' | 'otp'>('email');
+  const [otp, setOtp] = useState('');
+  const [otpSentEmail, setOtpSentEmail] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+
+  // Resend countdown timer
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => prev - 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   if (showIntro) {
     return (
@@ -214,10 +234,94 @@ export function Auth() {
   const switchTab = (toLogin: boolean) => {
     setIsLogin(toLogin);
     setIsForgot(false);
+    setForgotStep('email');
     setError(null);
+    setInfoMessage(null);
     setEmail('');
     setPassword('');
     setName('');
+    setOtp('');
+  };
+
+  const handleStartForgot = () => {
+    setIsForgot(true);
+    setForgotStep('email');
+    setError(null);
+    setInfoMessage(null);
+    setOtp('');
+    setPassword('');
+  };
+
+  // Step 1: Request OTP
+  const handleSendOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setInfoMessage(null);
+    setLoading(true);
+
+    try {
+      if (!email.trim()) throw new Error('Please enter your account email address');
+      await sendResetOtp(email.trim());
+      setOtpSentEmail(email.trim());
+      setForgotStep('otp');
+      setResendCooldown(60);
+      setInfoMessage(`✅ 6-Digit verification code sent to ${email.trim()}! Please check your inbox and spam folder.`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to send verification code. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Resend OTP
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0 || loading) return;
+    setError(null);
+    setInfoMessage(null);
+    setLoading(true);
+
+    try {
+      await sendResetOtp(otpSentEmail);
+      setResendCooldown(60);
+      setInfoMessage(`✅ A fresh 6-digit code has been dispatched to ${otpSentEmail}.`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to resend verification code.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Step 2: Verify OTP & Change Password
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setInfoMessage(null);
+    setLoading(true);
+
+    try {
+      if (!otp.trim() || otp.trim().length !== 6) {
+        throw new Error('Please enter the 6-digit verification code');
+      }
+      if (!password || password.length < 6) {
+        throw new Error('New password must be at least 6 characters long');
+      }
+      await verifyResetOtp(otpSentEmail, otp.trim(), password);
+      setSuccess(true);
+      setTimeout(() => {
+        setIsForgot(false);
+        setForgotStep('email');
+        setIsLogin(true);
+        setSuccess(false);
+        setPassword('');
+        setOtp('');
+        setError(null);
+        setInfoMessage(null);
+      }, 2500);
+    } catch (err: any) {
+      setError(err.message || 'Verification failed. Please check the code and try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -226,17 +330,7 @@ export function Auth() {
     setLoading(true);
 
     try {
-      if (isForgot) {
-        await resetPassword(email, password);
-        setSuccess(true);
-        setTimeout(() => {
-          setIsForgot(false);
-          setIsLogin(true);
-          setSuccess(false);
-          setPassword('');
-          setError(null);
-        }, 2200);
-      } else if (isLogin) {
+      if (isLogin) {
         await login(email, password);
       } else {
         if (!name.trim()) throw new Error('Please enter your full name');
@@ -320,9 +414,16 @@ export function Auth() {
             {/* Tab switcher or Forgot password Header */}
             {isForgot ? (
               <div className="text-center mb-6">
-                <h2 className="text-xl font-bold text-white">Direct Password Reset</h2>
-                <p className="text-xs text-white/50 mt-1 font-medium">
-                  Enter your registered email and choose a new password. It will update immediately!
+                <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 mx-auto flex items-center justify-center mb-3">
+                  <KeyRound className="w-6 h-6" />
+                </div>
+                <h2 className="text-xl font-bold text-white">
+                  {forgotStep === 'email' ? 'Forgot Password?' : 'Enter Verification Code'}
+                </h2>
+                <p className="text-xs text-white/50 mt-1 font-medium leading-relaxed max-w-xs mx-auto">
+                  {forgotStep === 'email'
+                    ? 'Enter your account email to receive a 6-digit OTP verification code.'
+                    : `We sent a 6-digit verification code to ${otpSentEmail}`}
                 </p>
               </div>
             ) : (
@@ -373,6 +474,24 @@ export function Auth() {
               )}
             </AnimatePresence>
 
+            {/* Info Message banner */}
+            <AnimatePresence>
+              {infoMessage && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden mb-4"
+                >
+                  <div className="bg-sky-500/10 border border-sky-500/20 text-sky-300 text-xs p-3 rounded-xl flex items-start gap-2">
+                    <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-sky-400" />
+                    <span>{infoMessage}</span>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {/* Success banner */}
             <AnimatePresence>
               {success && (
@@ -380,120 +499,251 @@ export function Auth() {
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: 'auto', opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
                   className="overflow-hidden mb-4"
                 >
-                  <div className="bg-green-500/10 border border-green-500/20 text-green-300 text-xs p-3 rounded-xl">
-                    {isForgot ? '✅ Password reset successful! Redirecting to login...' : '✅ Account created! Signing you in…'}
+                  <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs p-3 rounded-xl flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                    <span>
+                      {isForgot
+                        ? '✅ Password successfully changed! Redirecting to login...'
+                        : '✅ Account created! Signing you in…'}
+                    </span>
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
 
-            {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Name field (Sign Up only) */}
-              <AnimatePresence initial={false}>
-                {!isLogin && !isForgot && (
-                  <motion.div
-                    key="name"
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.22 }}
-                    className="overflow-hidden"
-                  >
+            {/* FORMS SECTION */}
+            {isForgot ? (
+              forgotStep === 'email' ? (
+                /* FORGOT PASSWORD - STEP 1: EMAIL */
+                <form onSubmit={handleSendOtp} className="space-y-4">
+                  <div>
                     <label className="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">
-                      Full Name
+                      Account Email Address
                     </label>
                     <div className="relative">
-                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/25" />
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/25" />
                       <input
-                        type="text"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="e.g. Sarah Smith"
-                        required={!isLogin && !isForgot}
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="name@example.com"
+                        required
+                        autoComplete="email"
                         className="w-full bg-black/30 border border-white/10 rounded-xl pl-9 pr-4 py-3 text-sm placeholder-white/20 focus:border-red-500/60 focus:ring-1 focus:ring-red-500/30 outline-none transition-all"
                       />
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                  </div>
 
-              {/* Email */}
-              <div>
-                <label className="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/25" />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="name@example.com"
-                    required
-                    autoComplete="email"
-                    className="w-full bg-black/30 border border-white/10 rounded-xl pl-9 pr-4 py-3 text-sm placeholder-white/20 focus:border-red-500/60 focus:ring-1 focus:ring-red-500/30 outline-none transition-all"
-                  />
-                </div>
-              </div>
+                  <motion.button
+                    type="submit"
+                    disabled={loading}
+                    whileTap={{ scale: 0.97 }}
+                    className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-900/40 cursor-pointer"
+                  >
+                    {loading ? (
+                      <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <><Mail className="w-4 h-4" /> Send 6-Digit OTP Code</>
+                    )}
+                  </motion.button>
+                </form>
+              ) : (
+                /* FORGOT PASSWORD - STEP 2: ENTER OTP & NEW PASSWORD */
+                <form onSubmit={handleVerifyOtp} className="space-y-4">
+                  {/* OTP Code Input */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
+                        6-Digit OTP Code
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleResendOtp}
+                        disabled={resendCooldown > 0 || loading}
+                        className="text-[10px] text-red-400 font-bold hover:text-red-300 disabled:opacity-40 disabled:cursor-default flex items-center gap-1 transition-colors cursor-pointer"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+                        {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend Code'}
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/25" />
+                      <input
+                        type="text"
+                        maxLength={6}
+                        value={otp}
+                        onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+                        placeholder="123456"
+                        required
+                        autoFocus
+                        className="w-full bg-black/30 border border-white/10 rounded-xl pl-9 pr-4 py-3 text-base tracking-widest font-mono placeholder-white/20 focus:border-red-500/60 focus:ring-1 focus:ring-red-500/30 outline-none transition-all text-center sm:text-left"
+                      />
+                    </div>
+                  </div>
 
-              {/* Password */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
-                    {isForgot ? 'New Password' : 'Password'}
-                  </label>
-                  {isLogin && !isForgot && (
+                  {/* New Password */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">
+                      Set New Password
+                    </label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/25" />
+                      <input
+                        type={showPass ? 'text' : 'password'}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••••"
+                        required
+                        minLength={6}
+                        autoComplete="new-password"
+                        className="w-full bg-black/30 border border-white/10 rounded-xl pl-9 pr-10 py-3 text-sm placeholder-white/20 focus:border-red-500/60 focus:ring-1 focus:ring-red-500/30 outline-none transition-all"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPass((v) => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors cursor-pointer"
+                      >
+                        {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <motion.button
+                    type="submit"
+                    disabled={loading}
+                    whileTap={{ scale: 0.97 }}
+                    className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-900/40 cursor-pointer"
+                  >
+                    {loading ? (
+                      <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <><CheckCircle2 className="w-4 h-4" /> Verify OTP & Reset Password</>
+                    )}
+                  </motion.button>
+
+                  <div className="text-center pt-1">
                     <button
                       type="button"
-                      onClick={() => setIsForgot(true)}
-                      className="text-[10px] text-red-400/70 hover:text-red-300 transition-colors"
+                      onClick={() => {
+                        setForgotStep('email');
+                        setError(null);
+                        setInfoMessage(null);
+                      }}
+                      className="text-[11px] text-white/50 hover:text-white transition-colors flex items-center justify-center gap-1 mx-auto cursor-pointer"
                     >
-                      Forgot password?
+                      <ArrowLeft className="w-3 h-3" /> Change Email
                     </button>
+                  </div>
+                </form>
+              )
+            ) : (
+              /* LOGIN & SIGN UP FORM */
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {/* Name field (Sign Up only) */}
+                <AnimatePresence initial={false}>
+                  {!isLogin && (
+                    <motion.div
+                      key="name"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.22 }}
+                      className="overflow-hidden"
+                    >
+                      <label className="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">
+                        Full Name
+                      </label>
+                      <div className="relative">
+                        <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/25" />
+                        <input
+                          type="text"
+                          value={name}
+                          onChange={(e) => setName(e.target.value)}
+                          placeholder="e.g. Sarah Smith"
+                          required={!isLogin}
+                          className="w-full bg-black/30 border border-white/10 rounded-xl pl-9 pr-4 py-3 text-sm placeholder-white/20 focus:border-red-500/60 focus:ring-1 focus:ring-red-500/30 outline-none transition-all"
+                        />
+                      </div>
+                    </motion.div>
                   )}
-                </div>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/25" />
-                  <input
-                    type={showPass ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    required
-                    autoComplete={isForgot ? 'new-password' : isLogin ? 'current-password' : 'new-password'}
-                    className="w-full bg-black/30 border border-white/10 rounded-xl pl-9 pr-10 py-3 text-sm placeholder-white/20 focus:border-red-500/60 focus:ring-1 focus:ring-red-500/30 outline-none transition-all"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPass((v) => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
-                  >
-                    {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
+                </AnimatePresence>
 
-              {/* Submit button */}
-              <motion.button
-                type="submit"
-                disabled={loading}
-                whileTap={{ scale: 0.97 }}
-                className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl text-sm transition-all flex items-center justify-center gap-2 mt-2 shadow-lg shadow-red-900/40"
-              >
-                {loading ? (
-                  <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : isForgot ? (
-                  <><ShieldAlert className="w-4 h-4" /> Reset Password</>
-                ) : isLogin ? (
-                  <><LogIn className="w-4 h-4" /> Sign In to SilentSOS</>
-                ) : (
-                  <><UserPlus className="w-4 h-4" /> Create My Account</>
-                )}
-              </motion.button>
-            </form>
+                {/* Email */}
+                <div>
+                  <label className="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">
+                    Email Address
+                  </label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/25" />
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="name@example.com"
+                      required
+                      autoComplete="email"
+                      className="w-full bg-black/30 border border-white/10 rounded-xl pl-9 pr-4 py-3 text-sm placeholder-white/20 focus:border-red-500/60 focus:ring-1 focus:ring-red-500/30 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                {/* Password */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
+                      Password
+                    </label>
+                    {isLogin && (
+                      <button
+                        type="button"
+                        onClick={handleStartForgot}
+                        className="text-[10px] text-red-400/80 hover:text-red-300 transition-colors font-medium cursor-pointer"
+                      >
+                        Forgot password?
+                      </button>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/25" />
+                    <input
+                      type={showPass ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      required
+                      autoComplete={isLogin ? 'current-password' : 'new-password'}
+                      className="w-full bg-black/30 border border-white/10 rounded-xl pl-9 pr-10 py-3 text-sm placeholder-white/20 focus:border-red-500/60 focus:ring-1 focus:ring-red-500/30 outline-none transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPass((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors cursor-pointer"
+                    >
+                      {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Submit button */}
+                <motion.button
+                  type="submit"
+                  disabled={loading}
+                  whileTap={{ scale: 0.97 }}
+                  className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl text-sm transition-all flex items-center justify-center gap-2 mt-2 shadow-lg shadow-red-900/40 cursor-pointer"
+                >
+                  {loading ? (
+                    <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : isLogin ? (
+                    <><LogIn className="w-4 h-4" /> Sign In to SilentSOS</>
+                  ) : (
+                    <><UserPlus className="w-4 h-4" /> Create My Account</>
+                  )}
+                </motion.button>
+              </form>
+            )}
 
             {/* Divider */}
             <div className="flex items-center gap-3 my-5">
@@ -507,8 +757,8 @@ export function Auth() {
               {isForgot ? (
                 <button
                   type="button"
-                  onClick={() => setIsForgot(false)}
-                  className="text-red-400 font-semibold hover:text-red-300 transition-colors underline underline-offset-2"
+                  onClick={() => switchTab(true)}
+                  className="text-red-400 font-semibold hover:text-red-300 transition-colors underline underline-offset-2 cursor-pointer"
                 >
                   Back to Sign In
                 </button>
@@ -518,7 +768,7 @@ export function Auth() {
                   <button
                     type="button"
                     onClick={() => switchTab(false)}
-                    className="text-red-400 font-semibold hover:text-red-300 transition-colors underline underline-offset-2"
+                    className="text-red-400 font-semibold hover:text-red-300 transition-colors underline underline-offset-2 cursor-pointer"
                   >
                     Sign Up
                   </button>

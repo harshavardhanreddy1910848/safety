@@ -38,6 +38,8 @@ type AppContextType = {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
   resetPassword: (email: string, password: string) => Promise<void>;
+  sendResetOtp: (email: string) => Promise<{ success: boolean; message: string; email: string }>;
+  verifyResetOtp: (email: string, otp: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
   logout: () => void;
   updateUser: (profile: string | { name?: string; phone?: string; bloodGroup?: string; homeAddress?: string; emergencyNotes?: string }) => Promise<void>;
   addContact: (contact: Contact) => Promise<void>;
@@ -310,6 +312,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setToken(data.token);
   };
 
+  const sendResetOtp = async (email: string) => {
+    const res = await fetch(`${API_BASE}/auth/send-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to send verification code');
+    }
+    return data;
+  };
+
+  const verifyResetOtp = async (email: string, otp: string, newPassword: string) => {
+    const res = await fetch(`${API_BASE}/auth/verify-otp-reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, otp, newPassword })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to verify code and reset password');
+    }
+    return data;
+  };
+
   const resetPassword = async (email: string, password: string) => {
     const res = await fetch(`${API_BASE}/auth/reset-password`, {
       method: 'POST',
@@ -578,6 +606,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         login,
         register,
         resetPassword,
+        sendResetOtp,
+        verifyResetOtp,
         logout,
         updateUser,
         addContact,

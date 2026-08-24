@@ -118,30 +118,8 @@ async function getMailTransporter() {
   return mailTransporter;
 }
 
-// Sends email using direct SMTP (Gmail) or Resend API depending on configuration
 async function dispatchEmail({ to, subject, html, attachments = [] }) {
-  // 1. Direct production SMTP transport (Gmail) - sends to any emergency recipient without test mode restrictions
-  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-    try {
-      const transporter = await getMailTransporter();
-      if (transporter) {
-        console.log(`✉️ Sending email via SMTP to ${to}...`);
-        const info = await transporter.sendMail({
-          from: `"SilentSOS System" <${transporter.options.auth.user}>`,
-          to,
-          subject,
-          html,
-          attachments
-        });
-        console.log(`✉️ Email successfully sent via SMTP to ${to} (MessageID: ${info.messageId})`);
-        return info;
-      }
-    } catch (smtpErr) {
-      console.warn(`⚠️ SMTP send failed to ${to}: ${smtpErr.message}. Trying HTTP API fallback...`);
-    }
-  }
-
-  // 2. Resend API HTTP fallback if configured
+  // 1. Resend API HTTP (Fastest & never blocked by ISP / Port 465 firewalls)
   if (process.env.RESEND_API_KEY) {
     const resendApiKey = process.env.RESEND_API_KEY;
     const resendSender = process.env.RESEND_SENDER || 'onboarding@resend.dev';
@@ -175,6 +153,27 @@ async function dispatchEmail({ to, subject, html, attachments = [] }) {
       }
     } catch (resendErr) {
       console.warn(`⚠️ Resend API request failed: ${resendErr.message}`);
+    }
+  }
+
+  // 2. Direct production SMTP transport (Gmail)
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    try {
+      const transporter = await getMailTransporter();
+      if (transporter) {
+        console.log(`✉️ Sending email via SMTP to ${to}...`);
+        const info = await transporter.sendMail({
+          from: `"SilentSOS System" <${transporter.options.auth.user}>`,
+          to,
+          subject,
+          html,
+          attachments
+        });
+        console.log(`✉️ Email successfully sent via SMTP to ${to} (MessageID: ${info.messageId})`);
+        return info;
+      }
+    } catch (smtpErr) {
+      console.warn(`⚠️ SMTP send failed to ${to}: ${smtpErr.message}`);
     }
   }
 
@@ -730,39 +729,150 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// In-memory OTP Store for password reset
+const resetOtpStore = new Map(); // email.toLowerCase() -> { otp, expiresAt, attempts }
+
+// Request OTP for password reset
+app.post('/api/auth/send-otp', async (req, res) => {
+  const { email } = req.body;
+  if (!email || !email.trim()) {
+    return res.status(400).json({ error: 'Email address is required' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = await db.getUserByEmail(normalizedEmail);
+  if (!user) {
+    return res.status(404).json({ error: 'No account found with this email address' });
+  }
+
+  // Generate 6-digit OTP
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+  resetOtpStore.set(normalizedEmail, { otp, expiresAt, attempts: 0 });
+  console.log(`\n======================================================`);
+  console.log(`🔐 [PASSWORD RESET OTP] For ${normalizedEmail}: ${otp}`);
+  console.log(`======================================================\n`);
+
+  const emailHtml = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 32px 24px; background-color: #0d1117; color: #f0f6fc; border-radius: 16px; border: 1px solid #30363d;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <div style="display: inline-block; padding: 12px 16px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; margin-bottom: 12px;">
+          <span style="font-size: 28px;">🛡️</span>
+        </div>
+        <h2 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.5px;">Password Reset Verification Code</h2>
+        <p style="color: #8b949e; font-size: 13px; margin: 6px 0 0 0;">SilentSOS Emergency Protection Network</p>
+      </div>
+
+      <p style="font-size: 14px; color: #c9d1d9; line-height: 1.6;">
+        Hello <strong>${user.name || 'User'}</strong>,
+      </p>
+      <p style="font-size: 14px; color: #8b949e; line-height: 1.6;">
+        We received a request to reset your password for your SilentSOS account (<strong>${normalizedEmail}</strong>). Use the 6-digit verification code below to complete your password reset:
+      </p>
+
+      <div style="text-align: center; margin: 28px 0; padding: 20px; background: #161b22; border-radius: 12px; border: 1px dashed #30363d;">
+        <span style="font-size: 36px; font-weight: 900; letter-spacing: 8px; color: #f85149; font-family: monospace;">${otp}</span>
+        <p style="font-size: 11px; color: #8b949e; margin: 8px 0 0 0; text-transform: uppercase; letter-spacing: 1px;">Valid for 10 minutes</p>
+      </div>
+
+      <div style="background: rgba(245, 158, 11, 0.1); border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 6px; margin-bottom: 24px;">
+        <p style="font-size: 12px; color: #fcd34d; margin: 0; line-height: 1.5;">
+          ⚠️ <strong>Security Tip:</strong> Never share this code with anyone. SilentSOS administrators will never ask for your verification code.
+        </p>
+      </div>
+
+      <p style="font-size: 12px; color: #8b949e; line-height: 1.5;">
+        If you did not request a password reset, you can safely ignore this email. Your password will remain unchanged.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #21262d; margin: 28px 0 16px 0;" />
+      <p style="font-size: 11px; color: #484f58; margin: 0; text-align: center;">
+        SilentSOS Cloud Security • Automated Verification Dispatch
+      </p>
+    </div>
+  `;
+
+  try {
+    await dispatchEmail({
+      to: normalizedEmail,
+      subject: `🛡️ ${otp} is your SilentSOS Password Reset Code`,
+      html: emailHtml
+    });
+  } catch (mailErr) {
+    console.warn(`[OTP Dispatch] Mail delivery error: ${mailErr.message}`);
+  }
+
+  res.json({
+    success: true,
+    message: `Verification code sent to ${normalizedEmail}`,
+    email: normalizedEmail
+  });
+});
+
+// Verify OTP & Complete Password Reset
+app.post('/api/auth/verify-otp-reset', async (req, res) => {
+  const { email, otp, newPassword } = req.body;
+  if (!email || !otp || !newPassword) {
+    return res.status(400).json({ error: 'Email, OTP code, and new password are required' });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const stored = resetOtpStore.get(normalizedEmail);
+
+  if (!stored) {
+    return res.status(400).json({ error: 'No OTP requested for this email or OTP has expired. Please request a new code.' });
+  }
+
+  if (Date.now() > stored.expiresAt) {
+    resetOtpStore.delete(normalizedEmail);
+    return res.status(400).json({ error: 'OTP code has expired. Please request a new code.' });
+  }
+
+  if (stored.otp !== otp.trim()) {
+    stored.attempts = (stored.attempts || 0) + 1;
+    if (stored.attempts >= 5) {
+      resetOtpStore.delete(normalizedEmail);
+      return res.status(400).json({ error: 'Too many invalid attempts. Please request a new code.' });
+    }
+    return res.status(400).json({ error: 'Invalid verification code. Please check and try again.' });
+  }
+
+  // OTP verified! Update password
+  try {
+    await db.resetPassword(normalizedEmail, newPassword);
+    resetOtpStore.delete(normalizedEmail);
+
+    // Send confirmation email
+    const confirmHtml = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; background: #0d1117; color: #f0f6fc; border-radius: 16px; border: 1px solid #30363d;">
+        <h2 style="color: #2ea043; margin-top: 0;">✅ Password Successfully Reset</h2>
+        <p style="font-size: 14px; color: #8b949e;">Your SilentSOS account password was successfully updated at ${new Date().toLocaleString()}. You can now sign in with your new password.</p>
+        <hr style="border: none; border-top: 1px solid #21262d; margin: 20px 0 12px 0;" />
+        <p style="font-size: 11px; color: #484f58; margin: 0; text-align: center;">SilentSOS Cloud Security</p>
+      </div>
+    `;
+    dispatchEmail({
+      to: normalizedEmail,
+      subject: '🛡️ SilentSOS: Password Reset Successful',
+      html: confirmHtml
+    }).catch(e => console.warn(e.message));
+
+    res.json({ success: true, message: 'Password has been successfully updated' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Backward compatible direct reset
 app.post('/api/auth/reset-password', async (req, res) => {
   const { email, password } = req.body;
   try {
     await db.resetPassword(email, password);
-
-    // Send confirmation email notification to user
-    const emailHtml = `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; background-color: #0d1117; color: #f0f6fc; border-radius: 16px; border: 1px solid #30363d;">
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-          <h2 style="color: #f85149; margin: 0; font-size: 20px;">🛡️ SilentSOS Security Notice</h2>
-        </div>
-        <p style="font-size: 15px; color: #c9d1d9; margin-top: 0;">Hello,</p>
-        <p style="font-size: 14px; color: #8b949e; line-height: 1.6;">
-          Your password for account <strong style="color: #f0f6fc;">${email}</strong> was successfully updated. You can now sign in using your new password.
-        </p>
-        <div style="background-color: #161b22; padding: 14px 18px; border-radius: 10px; border-left: 4px solid #2ea043; margin: 20px 0;">
-          <p style="margin: 0; font-size: 13px; color: #e6edf3;"><strong>Status:</strong> Password Successfully Changed</p>
-          <p style="margin: 6px 0 0 0; font-size: 12px; color: #8b949e;"><strong>Time:</strong> ${new Date().toLocaleString()}</p>
-        </div>
-        <p style="font-size: 12px; color: #8b949e; line-height: 1.5;">
-          If you did not make this request, please log in immediately and update your credentials or contact system security.
-        </p>
-        <hr style="border: none; border-top: 1px solid #21262d; margin: 24px 0 16px 0;" />
-        <p style="font-size: 11px; color: #484f58; margin: 0; text-align: center;">
-          SilentSOS Emergency Protection System • Automated Cloud Dispatch
-        </p>
-      </div>
-    `;
-
-    sendSingleEmail(email, '🛡️ SilentSOS: Your Password Has Been Reset', emailHtml).catch(err => {
-      console.warn(`[Reset-Password] Email dispatch notice failed: ${err.message}`);
-    });
-
     res.json({ success: true, message: 'Password reset successful' });
   } catch (err) {
     res.status(400).json({ error: err.message });

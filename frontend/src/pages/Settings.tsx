@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useApp } from '../AppContext';
 import {
   EyeOff,
@@ -27,8 +26,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 
 export function Settings() {
-  const navigate = useNavigate();
-  const { state, updateUser, updateSettings, clearData, logout } = useApp();
+  const { state, updateUser, updateSettings, logout } = useApp();
   const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'capture'>('profile');
   const [showFakeCall, setShowFakeCall] = useState(false);
 

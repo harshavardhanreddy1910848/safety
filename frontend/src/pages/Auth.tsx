@@ -320,8 +320,10 @@ export function Auth() {
             {/* Tab switcher or Forgot password Header */}
             {isForgot ? (
               <div className="text-center mb-6">
-                <h2 className="text-xl font-bold text-white">Reset Password</h2>
-                <p className="text-xs text-white/40 mt-1 font-medium">Enter your email and new password</p>
+                <h2 className="text-xl font-bold text-white">Direct Password Reset</h2>
+                <p className="text-xs text-white/50 mt-1 font-medium">
+                  Enter your registered email and choose a new password. It will update immediately!
+                </p>
               </div>
             ) : (
               <div className="relative flex bg-black/30 rounded-xl p-1 mb-6 border border-white/8">

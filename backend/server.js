@@ -734,6 +734,35 @@ app.post('/api/auth/reset-password', async (req, res) => {
   const { email, password } = req.body;
   try {
     await db.resetPassword(email, password);
+
+    // Send confirmation email notification to user
+    const emailHtml = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; background-color: #0d1117; color: #f0f6fc; border-radius: 16px; border: 1px solid #30363d;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+          <h2 style="color: #f85149; margin: 0; font-size: 20px;">🛡️ SilentSOS Security Notice</h2>
+        </div>
+        <p style="font-size: 15px; color: #c9d1d9; margin-top: 0;">Hello,</p>
+        <p style="font-size: 14px; color: #8b949e; line-height: 1.6;">
+          Your password for account <strong style="color: #f0f6fc;">${email}</strong> was successfully updated. You can now sign in using your new password.
+        </p>
+        <div style="background-color: #161b22; padding: 14px 18px; border-radius: 10px; border-left: 4px solid #2ea043; margin: 20px 0;">
+          <p style="margin: 0; font-size: 13px; color: #e6edf3;"><strong>Status:</strong> Password Successfully Changed</p>
+          <p style="margin: 6px 0 0 0; font-size: 12px; color: #8b949e;"><strong>Time:</strong> ${new Date().toLocaleString()}</p>
+        </div>
+        <p style="font-size: 12px; color: #8b949e; line-height: 1.5;">
+          If you did not make this request, please log in immediately and update your credentials or contact system security.
+        </p>
+        <hr style="border: none; border-top: 1px solid #21262d; margin: 24px 0 16px 0;" />
+        <p style="font-size: 11px; color: #484f58; margin: 0; text-align: center;">
+          SilentSOS Emergency Protection System • Automated Cloud Dispatch
+        </p>
+      </div>
+    `;
+
+    sendSingleEmail(email, '🛡️ SilentSOS: Your Password Has Been Reset', emailHtml).catch(err => {
+      console.warn(`[Reset-Password] Email dispatch notice failed: ${err.message}`);
+    });
+
     res.json({ success: true, message: 'Password reset successful' });
   } catch (err) {
     res.status(400).json({ error: err.message });

@@ -20,7 +20,6 @@ import { AdminLogin } from './pages/AdminLogin';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { AdminUsers } from './pages/AdminUsers';
 import { AdminAlerts } from './pages/AdminAlerts';
-import { AdminFeedback } from './pages/AdminFeedback';
 import { AdminSettings } from './pages/AdminSettings';
 
 // A wrapper to handle routing logic based on setup state and auth state
@@ -85,7 +84,7 @@ function AppContent() {
       <Route path="/admin/dashboard" element={<AdminDashboard />} />
       <Route path="/admin/users" element={<AdminUsers />} />
       <Route path="/admin/alerts" element={<AdminAlerts />} />
-      <Route path="/admin/feedback" element={<AdminFeedback />} />
+      <Route path="/admin/feedback" element={<Navigate to="/admin/dashboard" replace />} />
       <Route path="/admin/settings" element={<AdminSettings />} />
 
       {/* User Application Pages */}

@@ -13,12 +13,16 @@ import {
   Mail,
   Smartphone,
   CheckCircle,
-  Lock
+  Lock,
+  User,
+  HeartPulse,
+  Home,
+  Phone,
+  Activity
 } from 'lucide-react';
 
-const API_BASE = window.location.origin.includes('localhost') ? 'http://localhost:3001' : window.location.origin;
-
-
+const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '0.0.0.0');
+const API_BASE = isLocal ? 'http://localhost:3001' : window.location.origin;
 
 export function Receiver() {
   const { alertId } = useParams<{ alertId: string }>();
@@ -271,6 +275,65 @@ export function Receiver() {
 
         {/* Right Column: Dispatch Notifications & Captured Evidence Gallery */}
         <div className="lg:col-span-5 space-y-4">
+          {/* Victim Emergency & Medical Information (ICE) */}
+          {alertData.userProfile && (
+            <div className="bg-surface border border-surfaceHighlight rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-surfaceHighlight pb-2">
+                <h3 className="text-xs font-bold text-white uppercase flex items-center gap-1.5">
+                  <HeartPulse className="w-4 h-4 text-emergency" /> Emergency Medical Profile (ICE)
+                </h3>
+                {alertData.userProfile.bloodGroup && (
+                  <span className="px-2.5 py-0.5 bg-red-500/20 text-red-400 border border-red-500/30 rounded text-[10px] font-black tracking-wider">
+                    {alertData.userProfile.bloodGroup}
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between items-center bg-background/50 p-2 rounded-lg border border-surfaceHighlight/30">
+                  <span className="text-[10px] text-textMuted uppercase flex items-center gap-1">
+                    <User className="w-3 h-3 text-safe" /> Full Name
+                  </span>
+                  <span className="font-bold text-white">{alertData.userProfile.name || 'Not provided'}</span>
+                </div>
+
+                {alertData.userProfile.phone && (
+                  <div className="flex justify-between items-center bg-background/50 p-2 rounded-lg border border-surfaceHighlight/30">
+                    <span className="text-[10px] text-textMuted uppercase flex items-center gap-1">
+                      <Phone className="w-3 h-3 text-sky-400" /> Phone Number
+                    </span>
+                    <a
+                      href={`tel:${alertData.userProfile.phone}`}
+                      className="font-bold text-sky-400 hover:underline flex items-center gap-1 font-mono"
+                    >
+                      {alertData.userProfile.phone}
+                    </a>
+                  </div>
+                )}
+
+                {alertData.userProfile.homeAddress && (
+                  <div className="bg-background/50 p-2 rounded-lg border border-surfaceHighlight/30">
+                    <span className="text-[10px] text-textMuted uppercase flex items-center gap-1 mb-1">
+                      <Home className="w-3 h-3 text-amber-400" /> Primary Address
+                    </span>
+                    <p className="text-white text-xs leading-relaxed">{alertData.userProfile.homeAddress}</p>
+                  </div>
+                )}
+
+                {alertData.userProfile.emergencyNotes && (
+                  <div className="bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-lg">
+                    <span className="text-[10px] text-amber-400 font-bold uppercase flex items-center gap-1 mb-1">
+                      <Activity className="w-3 h-3 text-amber-400" /> Critical ICE / Medical Notes
+                    </span>
+                    <p className="text-amber-200 text-xs font-medium leading-relaxed">
+                      {alertData.userProfile.emergencyNotes}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Transmission / Notification Dispatch Center */}
           <div className="bg-surface border border-surfaceHighlight rounded-2xl p-4">
             <h3 className="text-xs font-bold text-textMuted uppercase mb-3 flex items-center gap-1.5">

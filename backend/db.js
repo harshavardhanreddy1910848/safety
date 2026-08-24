@@ -3,6 +3,8 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
+import { Pool as NeonPool, neonConfig } from '@neondatabase/serverless';
+import ws from 'ws';
 import dotenv from 'dotenv';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -10,18 +12,22 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
+neonConfig.webSocketConstructor = ws;
+
 // Initialize Neon PostgreSQL Connection Pool (Exclusive Cloud Database)
 const databaseUrl = process.env.DATABASE_URL || 'postgresql://neondb_owner:npg_4wbWrnqgNc3V@ep-cool-grass-aorbu4fo-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require';
 
-const connectionConfig = {
-  connectionString: databaseUrl,
-  ssl: { rejectUnauthorized: false }
-};
+const isNeon = databaseUrl.includes('neon.tech');
 
-export const pool = new pg.Pool(connectionConfig);
+export const pool = isNeon
+  ? new NeonPool({ connectionString: databaseUrl })
+  : new pg.Pool({
+      connectionString: databaseUrl,
+      ssl: { rejectUnauthorized: false }
+    });
 
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle Neon PostgreSQL client:', err);
+  console.error('Unexpected error on idle PostgreSQL client:', err);
 });
 
 // Helper to convert camelCase to snake_case for dynamic update properties

@@ -279,6 +279,18 @@ async function sendAlertEmails(user, contacts, alert, isInitial = false) {
               </ul>
             </div>
 
+            <!-- Victim Personal & Emergency Medical Profile -->
+            <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+              <h3 style="margin: 0 0 8px 0; color: #166534; font-size: 14px; font-weight: bold;">🩺 VICTIM PERSONAL & MEDICAL INFO (ICE):</h3>
+              <ul style="margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.6; color: #14532d;">
+                <li><strong>Full Name:</strong> ${user.name || 'Not provided'}</li>
+                ${user.phone ? `<li><strong>Phone Number:</strong> <a href="tel:${user.phone}" style="color: #166534; font-weight: bold;">${user.phone}</a></li>` : ''}
+                ${user.bloodGroup ? `<li><strong>Blood Group:</strong> <span style="background: #ef4444; color: #ffffff; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 11px;">${user.bloodGroup}</span></li>` : ''}
+                ${user.homeAddress ? `<li><strong>Primary Address:</strong> ${user.homeAddress}</li>` : ''}
+                ${user.emergencyNotes ? `<li><strong>ICE / Medical Notes:</strong> <span style="background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${user.emergencyNotes}</span></li>` : ''}
+              </ul>
+            </div>
+
             <div style="text-align: center; margin: 30px 0 20px 0;">
               <a href="${broadcastLink}" style="background-color: #10b981; color: white; padding: 12px 24px; text-decoration: none; font-weight: bold; border-radius: 8px; display: inline-block; font-size: 14px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
                 🛰️ Track Location & Evidence Live
@@ -733,15 +745,28 @@ app.get('/api/alerts/:id', async (req, res) => {
   const alertId = req.params.id;
 
   // First check in-memory active alert
-  if (activeAlert && activeAlert.id === alertId) {
-    return res.json(activeAlert);
+  let alert = (activeAlert && activeAlert.id === alertId) ? { ...activeAlert } : null;
+
+  if (!alert) {
+    // Search all users' history using the DB helper which handles decryption
+    const dbState = await db.getAllHistory();
+    alert = dbState.find(e => e.id === alertId);
   }
 
-  // Search all users' history using the DB helper which handles decryption
-  const dbState = await db.getAllHistory();
-  const decryptedAlert = dbState.find(e => e.id === alertId);
-  if (decryptedAlert) {
-    return res.json(decryptedAlert);
+  if (alert) {
+    const user = await db.getUser(alert.userId);
+    const enrichedAlert = {
+      ...alert,
+      userProfile: user ? {
+        name: user.name,
+        email: user.email,
+        phone: user.phone || '',
+        bloodGroup: user.bloodGroup || '',
+        homeAddress: user.homeAddress || '',
+        emergencyNotes: user.emergencyNotes || ''
+      } : null
+    };
+    return res.json(enrichedAlert);
   }
 
   res.status(404).json({ error: 'Alert not found' });

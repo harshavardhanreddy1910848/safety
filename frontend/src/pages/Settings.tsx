@@ -5,7 +5,6 @@ import {
   EyeOff,
   PhoneCall,
   Trash2,
-  Smartphone,
   MessageSquare,
   LogOut,
   Lock,
@@ -27,8 +26,7 @@ import {
   Sparkles,
   KeyRound,
   BatteryCharging,
-  Info,
-  HelpCircle
+  Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -837,6 +835,132 @@ export function Settings() {
                 </button>
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Change PIN Modal Overlay */}
+      <AnimatePresence>
+        {showChangePinModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 text-center"
+          >
+            <div className="max-w-xs w-full flex flex-col items-center relative">
+              {pinPhase !== 'success' && (
+                <button
+                  onClick={() => setShowChangePinModal(false)}
+                  className="absolute -top-12 -right-2 text-white/50 hover:text-white bg-white/10 rounded-full p-2 transition-all cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+
+              {pinPhase === 'success' ? (
+                <motion.div
+                  key="success"
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="flex flex-col items-center"
+                >
+                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mb-6 shadow-lg shadow-emerald-950/20">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-400" />
+                  </div>
+                  <h3 className="text-xl font-bold text-white mb-2">
+                    Safety PIN Changed!
+                  </h3>
+                  <p className="text-xs text-emerald-400 font-bold tracking-wide uppercase">
+                    Settings Saved
+                  </p>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="pin-phases"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="w-full flex flex-col items-center"
+                >
+                  <div className="w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-center mb-6 shadow-md shadow-rose-950/20">
+                    <Lock className="w-6 h-6 text-rose-400" />
+                  </div>
+
+                  <h3 className="text-xl font-bold text-white mb-2">
+                    {pinPhase === 'verify' && 'Verify Current PIN'}
+                    {pinPhase === 'new' && 'Enter New PIN'}
+                    {pinPhase === 'confirm' && 'Confirm New PIN'}
+                  </h3>
+                  <p className="text-xs text-textMuted mb-8 leading-relaxed max-w-[240px]">
+                    {pinPhase === 'verify' && 'Enter your current 4-digit Safety PIN to verify identity.'}
+                    {pinPhase === 'new' && 'Enter your new secure 4-digit Safety PIN.'}
+                    {pinPhase === 'confirm' && 'Re-enter your new 4-digit Safety PIN to confirm.'}
+                  </p>
+
+                  {/* PIN Dot Indicators */}
+                  <div className="flex gap-4 mb-8">
+                    {[0, 1, 2, 3].map((index) => (
+                      <motion.div
+                        key={index}
+                        animate={changePinError ? { x: [0, -10, 10, -10, 10, 0] } : {}}
+                        transition={{ duration: 0.4 }}
+                        className={`w-4 h-4 rounded-full border-2 transition-all ${
+                          enteredPin.length > index
+                            ? changePinError
+                              ? 'bg-rose-500 border-rose-500'
+                              : 'bg-emerald-500 border-emerald-500 shadow-[0_0_8px_#10b981]'
+                            : 'border-white/25 bg-transparent'
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Keypad */}
+                  <div className="grid grid-cols-3 gap-4 w-full max-w-[260px] mb-8">
+                    {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((num) => (
+                      <button
+                        key={num}
+                        onClick={() => handlePinKeyPress(num)}
+                        className="aspect-square rounded-2xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-lg font-bold text-white flex items-center justify-center transition-all active:scale-90 shadow-sm cursor-pointer"
+                      >
+                        {num}
+                      </button>
+                    ))}
+                    <button
+                      onClick={handlePinClear}
+                      disabled={enteredPin.length === 0}
+                      className="aspect-square rounded-2xl text-[10px] uppercase font-bold text-white/40 hover:text-white transition-colors flex items-center justify-center disabled:opacity-0 disabled:cursor-default cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={() => handlePinKeyPress('0')}
+                      className="aspect-square rounded-2xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-lg font-bold text-white flex items-center justify-center transition-all active:scale-90 shadow-sm cursor-pointer"
+                    >
+                      0
+                    </button>
+                    <button
+                      onClick={handlePinBackspace}
+                      disabled={enteredPin.length === 0}
+                      className="aspect-square rounded-2xl text-[10px] uppercase font-bold text-white/40 hover:text-white transition-colors flex items-center justify-center disabled:opacity-0 disabled:cursor-default cursor-pointer"
+                    >
+                      Delete
+                    </button>
+                  </div>
+
+                  {changePinErrorMessage && (
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="text-xs text-rose-400 font-bold animate-pulse"
+                    >
+                      {changePinErrorMessage}
+                    </motion.p>
+                  )}
+                </motion.div>
+              )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

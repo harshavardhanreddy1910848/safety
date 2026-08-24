@@ -10,6 +10,7 @@ import { db, initDb } from './db.js';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import dns from 'dns';
+import jwt from 'jsonwebtoken';
 
 // Force DNS resolution to prefer IPv4 (fixes IPv6 ENETUNREACH issues in cloud environments like Railway)
 if (typeof dns.setDefaultResultOrder === 'function') {
@@ -28,6 +29,7 @@ const wss = new WebSocketServer({ server });
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
+const JWT_SECRET = process.env.JWT_SECRET || 'silentsos_super_secure_jwt_secret_key_2026';
 
 // Setup directories
 const EVIDENCE_DIR = path.join(__dirname, 'evidence');
@@ -552,7 +554,7 @@ app.get('/api/debug/last-alert', async (req, res) => {
   }
 });
 
-// Simple JWT-like base64 Token Authentication middleware
+// JWT Authentication middleware supporting standard signed JWTs and Base64 tokens
 async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -562,8 +564,31 @@ async function authenticateToken(req, res, next) {
   }
 
   try {
-    const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
-    req.userId = decoded.userId;
+    let userId = null;
+
+    // 1. Try standard signed JWT verification
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      userId = decoded.userId || decoded.sub;
+    } catch (jwtErr) {
+      // 2. Support JWT format without verification or direct payload Base64 (sub, name, exp)
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const payloadJson = Buffer.from(parts[1], 'base64').toString('utf8');
+        const decoded = JSON.parse(payloadJson);
+        userId = decoded.userId || decoded.sub;
+      } else {
+        // 3. Fallback: Base64 JSON token
+        const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+        userId = decoded.userId || decoded.sub;
+      }
+    }
+
+    if (!userId) {
+      return res.status(403).json({ error: 'Forbidden: Invalid token payload' });
+    }
+
+    req.userId = String(userId);
 
     const user = await db.getUser(req.userId);
     if (user && user.disabled) {
@@ -708,7 +733,11 @@ app.post('/api/auth/register', async (req, res) => {
   const { email, password, name } = req.body;
   try {
     const user = await db.registerUser(email, password, name);
-    const token = Buffer.from(JSON.stringify({ userId: user.id })).toString('base64');
+    const token = jwt.sign(
+      { userId: user.id, sub: user.id, name: user.name, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
     res.json({ token, user });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -722,7 +751,11 @@ app.post('/api/auth/login', async (req, res) => {
     if (user.disabled) {
       return res.status(403).json({ error: 'Your account has been disabled by an administrator.' });
     }
-    const token = Buffer.from(JSON.stringify({ userId: user.id })).toString('base64');
+    const token = jwt.sign(
+      { userId: user.id, sub: user.id, name: user.name, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
     res.json({ token, user });
   } catch (err) {
     res.status(400).json({ error: err.message });

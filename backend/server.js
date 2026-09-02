@@ -628,7 +628,54 @@ function broadcastToReceivers(alertId, messageObj) {
   }
 }
 
-// Simulated SMS, WhatsApp, Email notification generator
+// Fast2SMS Real-Time Emergency SMS Gateway
+async function dispatchFast2SMS(numbers, message) {
+  const apiKey = process.env.FAST2SMS_API_KEY;
+  if (!apiKey) {
+    console.log('ℹ️ Fast2SMS API key not configured, skipping real SMS dispatch.');
+    return { success: false, reason: 'No API key' };
+  }
+
+  // Clean numbers: Extract valid 10-digit Indian numbers
+  const numberList = (Array.isArray(numbers) ? numbers : [numbers])
+    .map(n => String(n || '').replace(/\D/g, ''))
+    .map(n => n.length === 12 && n.startsWith('91') ? n.substring(2) : n)
+    .filter(n => n.length === 10);
+
+  if (numberList.length === 0) {
+    console.log('ℹ️ No valid 10-digit phone numbers found for Fast2SMS dispatch.');
+    return { success: false, reason: 'No valid numbers' };
+  }
+
+  const numberStr = numberList.join(',');
+  console.log(`📱 Dispatching live Fast2SMS emergency alert to: ${numberStr}`);
+
+  try {
+    const response = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+      method: 'POST',
+      headers: {
+        'authorization': apiKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        route: 'q',
+        message: message,
+        language: 'english',
+        flash: 0,
+        numbers: numberStr
+      })
+    });
+
+    const data = await response.json();
+    console.log('📱 Fast2SMS Dispatch Result:', data);
+    return { success: response.ok, data };
+  } catch (err) {
+    console.error('❌ Fast2SMS dispatch error:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// Notification dispatch logger
 function dispatchEmergencyAlerts(user, contacts, alertId, lat = 19.076, lng = 72.8777) {
   const timeStr = new Date().toLocaleTimeString();
   const mapsLink = `https://maps.google.com/?q=${lat},${lng}`;
@@ -642,9 +689,9 @@ function dispatchEmergencyAlerts(user, contacts, alertId, lat = 19.076, lng = 72
       email: c.email,
       channels: {
         sms: {
-          status: c.preferences.message ? 'Delivered' : 'Skipped',
-          service: 'Twilio Emergency Gateway',
-          payload: `🚨 SOS! ${c.name}, ${user.name} triggered a safety alert! Time: ${timeStr}. Live Map: ${broadcastLink} Location: ${mapsLink}`,
+          status: c.preferences && c.preferences.message !== false ? 'Delivered' : 'Skipped',
+          service: 'Fast2SMS Emergency Gateway',
+          payload: `🚨 SOS! ${c.name}, ${user.name} triggered a safety alert! Time: ${timeStr}. Location: ${mapsLink}`,
           timestamp: Date.now()
         },
         whatsapp: {
@@ -1016,6 +1063,17 @@ app.post('/api/alerts', async (req, res) => {
   
   // Automatically dispatch emergency alert notification email (immediate, Email 1)
   sendAlertEmails(user, contacts, newAlert, true);
+
+  // Automatically dispatch emergency SMS text messages via Fast2SMS
+  const smsNumbers = contacts
+    .filter(c => c.phone && c.preferences && c.preferences.message !== false)
+    .map(c => c.phone);
+
+  if (smsNumbers.length > 0) {
+    const timeStr = new Date().toLocaleTimeString();
+    const smsMessage = `🚨 SOS EMERGENCY! ${user.name || 'User'} triggered a safety alert at ${timeStr}. Live Google Maps: https://maps.google.com/?q=${initialLat},${initialLng} - SilentSOS`;
+    dispatchFast2SMS(smsNumbers, smsMessage);
+  }
 
   // Schedule Email 2: Send evidence files exactly 20 seconds after trigger
   const alertId = id;

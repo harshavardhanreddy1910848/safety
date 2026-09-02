@@ -38,6 +38,10 @@ const initialState: AppState = {
   userName: '',
   userEmail: '',
   userId: '',
+  userAddress: '',
+  userBloodGroup: '',
+  userFatherName: '',
+  userMotherName: '',
   userRole: 'user',
   contacts: [],
   settings: defaultSettings,
@@ -55,7 +59,10 @@ type AppContextType = {
   sendResetCode: (email: string) => Promise<void>;
   resetPassword: (email: string, code: string, password: string) => Promise<void>;
   logout: () => void;
-  updateUser: (name: string, password?: string) => Promise<void>;
+  updateUser: (
+    nameOrUpdates: string | { name?: string; password?: string; address?: string; bloodGroup?: string; fatherName?: string; motherName?: string },
+    password?: string
+  ) => Promise<void>;
   addContact: (contact: Contact) => Promise<void>;
   updateContact: (id: string, contact: Partial<Contact>) => Promise<void>;
   removeContact: (id: string) => Promise<void>;
@@ -159,6 +166,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           userName: data.user.name,
           userEmail: data.user.email,
           userId: data.user.id,
+          userAddress: data.user.address || '',
+          userBloodGroup: data.user.bloodGroup || '',
+          userFatherName: data.user.fatherName || '',
+          userMotherName: data.user.motherName || '',
           userRole: data.user.role || 'user',
           contacts: data.contacts,
           settings: data.settings,
@@ -266,8 +277,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
 
-  const updateUser = async (name: string, password?: string) => {
-    setState((s) => ({ ...s, userName: name }));
+  const updateUser = async (
+    nameOrUpdates: string | { name?: string; password?: string; address?: string; bloodGroup?: string; fatherName?: string; motherName?: string },
+    password?: string
+  ) => {
+    let payload: any = {};
+    if (typeof nameOrUpdates === 'string') {
+      payload = { name: nameOrUpdates, password };
+      setState((s) => ({ ...s, userName: nameOrUpdates }));
+    } else {
+      payload = nameOrUpdates;
+      setState((s) => ({
+        ...s,
+        userName: nameOrUpdates.name !== undefined ? nameOrUpdates.name : s.userName,
+        userAddress: nameOrUpdates.address !== undefined ? nameOrUpdates.address : s.userAddress,
+        userBloodGroup: nameOrUpdates.bloodGroup !== undefined ? nameOrUpdates.bloodGroup : s.userBloodGroup,
+        userFatherName: nameOrUpdates.fatherName !== undefined ? nameOrUpdates.fatherName : s.userFatherName,
+        userMotherName: nameOrUpdates.motherName !== undefined ? nameOrUpdates.motherName : s.userMotherName,
+      }));
+    }
+
     if (!token) return;
     try {
       const res = await fetch(`${API_BASE}/user`, {
@@ -276,11 +305,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ name, password })
+        body: JSON.stringify(payload)
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error || 'Failed to update user profile');
+      }
+      const updatedUser = await res.json();
+      if (updatedUser) {
+        setState((s) => ({
+          ...s,
+          userName: updatedUser.name !== undefined ? updatedUser.name : s.userName,
+          userAddress: updatedUser.address !== undefined ? updatedUser.address : s.userAddress,
+          userBloodGroup: updatedUser.bloodGroup !== undefined ? updatedUser.bloodGroup : s.userBloodGroup,
+          userFatherName: updatedUser.fatherName !== undefined ? updatedUser.fatherName : s.userFatherName,
+          userMotherName: updatedUser.motherName !== undefined ? updatedUser.motherName : s.userMotherName,
+        }));
       }
     } catch (e) {
       console.error('Failed to update user profile:', e);

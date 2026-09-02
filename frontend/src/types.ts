@@ -54,6 +54,10 @@ export type AppState = {
   userName: string;
   userEmail?: string;
   userId?: string;
+  userAddress?: string;
+  userBloodGroup?: string;
+  userFatherName?: string;
+  userMotherName?: string;
   userRole?: 'user' | 'admin';
   contacts: Contact[];
   settings: Settings;

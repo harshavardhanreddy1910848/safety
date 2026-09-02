@@ -909,9 +909,13 @@ app.post('/api/user/setup-complete', async (req, res) => {
 
 app.post('/api/user', async (req, res) => {
   try {
-    const { name, password } = req.body;
+    const { name, password, address, bloodGroup, fatherName, motherName } = req.body;
     const updates = {};
     if (name !== undefined) updates.name = name;
+    if (address !== undefined) updates.address = address;
+    if (bloodGroup !== undefined) updates.bloodGroup = bloodGroup;
+    if (fatherName !== undefined) updates.fatherName = fatherName;
+    if (motherName !== undefined) updates.motherName = motherName;
     if (password !== undefined && password.trim() !== '') {
       updates.password = password;
     }

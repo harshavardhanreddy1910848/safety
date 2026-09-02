@@ -130,6 +130,10 @@ function mapUserRow(row) {
     id: row.id,
     email: row.email,
     name: row.name,
+    address: row.address || '',
+    bloodGroup: row.blood_group || '',
+    fatherName: row.father_name || '',
+    motherName: row.mother_name || '',
     role: row.role || 'user',
     disabled: row.disabled === true || row.disabled === 1,
     isSetupComplete: row.is_setup_complete === true || row.is_setup_complete === 1
@@ -225,11 +229,25 @@ export async function initDb() {
       email VARCHAR(255) UNIQUE,
       password_hash VARCHAR(255),
       name VARCHAR(255),
+      address TEXT,
+      blood_group VARCHAR(50),
+      father_name VARCHAR(255),
+      mother_name VARCHAR(255),
       role VARCHAR(50),
       disabled BOOLEAN DEFAULT FALSE,
       is_setup_complete BOOLEAN DEFAULT FALSE
     )
   `);
+
+  // Migrate existing tables if columns do not exist
+  try {
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS address TEXT;`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS blood_group VARCHAR(50);`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS father_name VARCHAR(255);`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mother_name VARCHAR(255);`);
+  } catch (e) {
+    console.warn('Column migration notice:', e.message);
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contacts (

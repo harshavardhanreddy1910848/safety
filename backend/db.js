@@ -55,22 +55,46 @@ function convertPlaceholders(sql) {
   return sql.replace(/\?/g, () => `$${index++}`);
 }
 
+// Resilient query executor with automatic retry for transient network glitches
+async function executeQueryWithRetry(fn, maxRetries = 2) {
+  let lastErr;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const isTransient = err.message?.includes('fetch failed') ||
+                          err.message?.includes('timeout') ||
+                          err.message?.includes('terminated') ||
+                          err.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+                          err.code === 'ECONNRESET';
+      if (isTransient && attempt < maxRetries) {
+        console.warn(`⚠️ Transient DB connection issue (attempt ${attempt}/${maxRetries}), retrying in 1s...`);
+        await new Promise(r => setTimeout(r, 1000));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
 // PG Wrapper queries mimicking standard SQLite methods
 async function run(sql, params = []) {
   const pgSql = convertPlaceholders(sql);
-  const result = await pool.query(pgSql, params);
+  const result = await executeQueryWithRetry(() => pool.query(pgSql, params));
   return { changes: result.rowCount };
 }
 
 async function get(sql, params = []) {
   const pgSql = convertPlaceholders(sql);
-  const result = await pool.query(pgSql, params);
+  const result = await executeQueryWithRetry(() => pool.query(pgSql, params));
   return result.rows[0] || null;
 }
 
 async function all(sql, params = []) {
   const pgSql = convertPlaceholders(sql);
-  const result = await pool.query(pgSql, params);
+  const result = await executeQueryWithRetry(() => pool.query(pgSql, params));
   return result.rows;
 }
 

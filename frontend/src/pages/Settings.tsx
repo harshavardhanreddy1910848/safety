@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useApp } from '../AppContext';
 import {
   EyeOff,
-  PhoneCall,
   Trash2,
   Smartphone,
   MessageSquare,
@@ -16,7 +15,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 export function Settings() {
   const { state, updateSettings, clearData, logout } = useApp();
-  const [showFakeCall, setShowFakeCall] = useState(false);
 
   // Change PIN modal states
   const [showChangePinModal, setShowChangePinModal] = useState(false);
@@ -127,34 +125,7 @@ export function Settings() {
       window.location.reload();
     }
   };
-  if (showFakeCall) {
-    return (
-      <div
-        className="absolute inset-0 bg-black z-50 flex flex-col items-center justify-between py-16 px-6"
-        onClick={() => setShowFakeCall(false)}>
-        
-        <div className="text-center space-y-2 mt-10">
-          <h2 className="text-3xl font-normal text-white">Mom</h2>
-          <p className="text-white/60">Mobile</p>
-        </div>
 
-        <div className="flex w-full justify-between px-8 mb-10">
-          <div className="flex flex-col items-center">
-            <button className="w-16 h-16 rounded-full bg-emergency flex items-center justify-center mb-2">
-              <PhoneCall className="w-8 h-8 text-white rotate-[135deg]" />
-            </button>
-            <span className="text-white/80 text-sm">Decline</span>
-          </div>
-          <div className="flex flex-col items-center">
-            <button className="w-16 h-16 rounded-full bg-safe flex items-center justify-center mb-2 animate-pulse">
-              <PhoneCall className="w-8 h-8 text-black" />
-            </button>
-            <span className="text-white/80 text-sm">Accept</span>
-          </div>
-        </div>
-      </div>);
-
-  }
   return (
     <div className="flex flex-col h-full bg-background p-6 overflow-y-auto no-scrollbar pb-24">
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
@@ -166,7 +137,7 @@ export function Settings() {
             <EyeOff className="w-4 h-4 mr-2" /> Stealth & Disguise
           </h2>
           <div className="bg-surface border border-surfaceHighlight rounded-xl overflow-hidden">
-            <div className="p-4 flex items-center justify-between border-b border-surfaceHighlight">
+            <div className="p-4 flex items-center justify-between">
               <div>
                 <p className="font-medium">Stealth Mode</p>
                 <p className="text-xs text-textMuted">
@@ -184,20 +155,6 @@ export function Settings() {
                 <div
                   className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${state.settings.stealthMode ? 'left-7' : 'left-1'}`} />
                 
-              </button>
-            </div>
-            <div className="p-4 flex items-center justify-between">
-              <div>
-                <p className="font-medium">Fake Call Disguise</p>
-                <p className="text-xs text-textMuted">
-                  Show fake incoming call
-                </p>
-              </div>
-              <button
-                onClick={() => setShowFakeCall(true)}
-                className="text-xs bg-surfaceHighlight px-3 py-1.5 rounded-lg font-medium hover:bg-surface transition-colors">
-                
-                Test
               </button>
             </div>
           </div>

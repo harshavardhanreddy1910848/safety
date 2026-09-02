@@ -5,13 +5,14 @@ import cors from 'cors';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { db, initDb } from './db.js';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import dns from 'dns';
 
-// Force DNS resolution to prefer IPv4 (fixes IPv6 ENETUNREACH issues in cloud environments like Railway)
+// Force DNS resolution to prefer IPv4 (fixes IPv6 ENETUNREACH issues in cloud environments)
 if (typeof dns.setDefaultResultOrder === 'function') {
   dns.setDefaultResultOrder('ipv4first');
 }
@@ -28,6 +29,8 @@ const wss = new WebSocketServer({ server });
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
+const JWT_SECRET = process.env.JWT_SECRET || 'silentsos-neon-secure-jwt-hmac-sha256-key-2026';
+const JWT_EXPIRES_IN_SECONDS = parseInt(process.env.JWT_EXPIRES_IN || '604800'); // 7 days default
 
 // Setup directories
 const EVIDENCE_DIR = path.join(__dirname, 'evidence');
@@ -46,14 +49,119 @@ const storage = multer.diskStorage({
     cb(null, `${req.params.id}-${file.fieldname}-${uniqueSuffix}${ext}`);
   }
 });
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB max per file
+});
 
 let mailTransporter = null;
 let lastMailError = null;
 const sentEvidenceAlerts = new Set();
 const activeAlertTimers = new Map();
 
-// Helper to resolve host to IPv4 using dns.resolve4 to completely bypass IPv6 lookup issues
+// Helper to base64url encode/decode
+function base64UrlEncode(str) {
+  return Buffer.from(str)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+function base64UrlDecode(str) {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (str.length % 4) str += '=';
+  return Buffer.from(str, 'base64').toString('utf8');
+}
+
+// Cryptographically secure HMAC-SHA256 Token Generation
+function generateToken(payload) {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const now = Math.floor(Date.now() / 1000);
+  const fullPayload = {
+    ...payload,
+    iat: now,
+    exp: now + JWT_EXPIRES_IN_SECONDS
+  };
+
+  const encodedHeader = base64UrlEncode(JSON.stringify(header));
+  const encodedPayload = base64UrlEncode(JSON.stringify(fullPayload));
+  const signature = crypto
+    .createHmac('sha256', JWT_SECRET)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+
+  return `${encodedHeader}.${encodedPayload}.${signature}`;
+}
+
+// Token Verification
+function verifyToken(token) {
+  if (!token) throw new Error('No token provided');
+
+  // Handle JWT token (header.payload.signature)
+  if (token.includes('.')) {
+    const parts = token.split('.');
+    if (parts.length !== 3) throw new Error('Malformed token');
+
+    const [headerB64, payloadB64, sigB64] = parts;
+    const expectedSig = crypto
+      .createHmac('sha256', JWT_SECRET)
+      .update(`${headerB64}.${payloadB64}`)
+      .digest('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+
+    if (sigB64 !== expectedSig) {
+      throw new Error('Invalid token signature');
+    }
+
+    const payload = JSON.parse(base64UrlDecode(payloadB64));
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp && payload.exp < now) {
+      throw new Error('Token has expired');
+    }
+    return payload;
+  }
+
+  // Backward compatibility fallback for legacy simple base64 tokens
+  try {
+    const legacy = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+    if (legacy && legacy.userId) return legacy;
+  } catch (e) { }
+
+  throw new Error('Invalid token format');
+}
+
+// In-Memory Rate Limiting
+const rateLimitMap = new Map();
+function rateLimiter(limit = 15, windowMs = 60000) {
+  return (req, res, next) => {
+    const ip = req.ip || req.connection.remoteAddress || 'unknown';
+    const key = `${ip}-${req.baseUrl}${req.path}`;
+    const now = Date.now();
+
+    const record = rateLimitMap.get(key) || { count: 0, resetTime: now + windowMs };
+
+    if (now > record.resetTime) {
+      record.count = 0;
+      record.resetTime = now + windowMs;
+    }
+
+    record.count += 1;
+    rateLimitMap.set(key, record);
+
+    if (record.count > limit) {
+      return res.status(429).json({ error: 'Too many requests. Please try again in a minute.' });
+    }
+    next();
+  };
+}
+
+// DNS resolver helper
 function resolveHostToIPv4(host) {
   return new Promise((resolve) => {
     if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
@@ -61,8 +169,7 @@ function resolveHostToIPv4(host) {
     }
     dns.resolve4(host, (err, addresses) => {
       if (err || !addresses || addresses.length === 0) {
-        console.warn(`⚠️ Failed to resolve host ${host} to IPv4:`, err ? err.message : 'no addresses');
-        resolve(host); // Fallback to original hostname if resolve fails
+        resolve(host);
       } else {
         resolve(addresses[0]);
       }
@@ -81,7 +188,6 @@ async function getMailTransporter() {
 
   if (smtpUser && smtpPass) {
     const isGmail = smtpHost.includes('gmail');
-    
     if (isGmail) {
       mailTransporter = nodemailer.createTransport({
         service: 'gmail',
@@ -96,8 +202,6 @@ async function getMailTransporter() {
       console.log(`✉️ Nodemailer configured using Gmail Service for: ${smtpUser}`);
     } else {
       const resolvedHost = await resolveHostToIPv4(smtpHost);
-      console.log(`✉️ Resolved SMTP host ${smtpHost} to IPv4: ${resolvedHost}`);
-
       mailTransporter = nodemailer.createTransport({
         host: resolvedHost,
         port: smtpPort,
@@ -113,10 +217,9 @@ async function getMailTransporter() {
         greetingTimeout: 8000,
         socketTimeout: 10000
       });
-      console.log(`✉️ Nodemailer SMTP configured using user: ${smtpUser}`);
+      console.log(`✉️ Nodemailer SMTP configured using: ${smtpUser}`);
     }
   } else {
-    // Generate Ethereal testing account as fallback
     try {
       const testAccount = await nodemailer.createTestAccount();
       mailTransporter = nodemailer.createTransport({
@@ -137,26 +240,17 @@ async function getMailTransporter() {
   return mailTransporter;
 }
 
-// Sends email using either Resend HTTP API or Nodemailer SMTP depending on configuration
+// Dispatches email using Resend API or SMTP
 async function dispatchEmail({ to, subject, html, attachments = [] }) {
   if (process.env.RESEND_API_KEY) {
     const resendApiKey = process.env.RESEND_API_KEY;
     const resendSender = process.env.RESEND_SENDER || 'onboarding@resend.dev';
-    const fromName = "SilentSOS System";
+    const fromName = 'SilentSOS System';
     const fromAddress = resendSender.includes('<') ? resendSender : `${fromName} <${resendSender}>`;
 
-    const body = {
-      from: fromAddress,
-      to,
-      subject,
-      html
-    };
+    const body = { from: fromAddress, to, subject, html };
+    if (attachments && attachments.length > 0) body.attachments = attachments;
 
-    if (attachments && attachments.length > 0) {
-      body.attachments = attachments;
-    }
-
-    console.log(`✉️ Sending email via Resend API to ${to}...`);
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -172,13 +266,11 @@ async function dispatchEmail({ to, subject, html, attachments = [] }) {
     }
 
     const data = await response.json();
-    console.log(`✉️ Email successfully sent via Resend API to ${to} (ID: ${data.id})`);
     return data;
   } else {
     const transporter = await getMailTransporter();
-    if (!transporter) {
-      throw new Error('Mail transporter not initialized');
-    }
+    if (!transporter) throw new Error('Mail transporter not initialized');
+
     const info = await transporter.sendMail({
       from: `"SilentSOS System" <${transporter.options.auth.user}>`,
       to,
@@ -186,34 +278,32 @@ async function dispatchEmail({ to, subject, html, attachments = [] }) {
       html,
       attachments
     });
-    console.log(`✉️ Email successfully sent via SMTP to ${to} (MessageID: ${info.messageId})`);
     return info;
   }
 }
 
-// Sends alert notification email to emergency contacts
+// Dispatches real-time emergency alert emails and updates notification status in Neon PostgreSQL
 async function sendAlertEmails(user, contacts, alert, isInitial = false) {
   try {
     const alertId = alert.id;
     const timeStr = new Date(alert.timestamp).toLocaleTimeString();
     const dateStr = new Date(alert.timestamp).toLocaleDateString();
-    
+
     const broadcastLink = `${FRONTEND_URL}/receiver/${alertId}`;
-    const latestCoords = alert.gpsPath && alert.gpsPath.length > 0 
-      ? alert.gpsPath[alert.gpsPath.length - 1] 
+    const latestCoords = alert.gpsPath && alert.gpsPath.length > 0
+      ? alert.gpsPath[alert.gpsPath.length - 1]
       : null;
-    
+
     if (!latestCoords) {
       console.warn(`⚠️ Alert ${alertId} has no GPS coordinates. Skipping email dispatch.`);
       return;
     }
-    
+
     const googleMapsLink = latestCoords.googleMapsLink || `https://maps.google.com/?q=${latestCoords.lat},${latestCoords.lng}`;
-    const locationTimeStr = latestCoords.timestamp 
-      ? new Date(latestCoords.timestamp).toISOString() 
+    const locationTimeStr = latestCoords.timestamp
+      ? new Date(latestCoords.timestamp).toISOString()
       : new Date(alert.timestamp).toISOString();
 
-    // Append global email recipients from administrator settings
     const globalSettings = await db.getSettings('global');
     let extraRecipients = [];
     if (globalSettings && globalSettings.globalEmergencyEmails) {
@@ -230,23 +320,11 @@ async function sendAlertEmails(user, contacts, alert, isInitial = false) {
     }
 
     const emailRecipients = [
-      ...contacts.filter(c => c.email),
+      ...contacts.filter(c => c.email && c.preferences?.email !== false),
       ...extraRecipients
     ];
 
-    if (emailRecipients.length === 0) {
-      console.log('✉️ No contacts or global emails. Skipping email dispatch.');
-      return;
-    }
-
-    // Initialize transporter only if we are using SMTP
-    if (!process.env.RESEND_API_KEY) {
-      const transporter = await getMailTransporter();
-      if (!transporter) {
-        console.warn('⚠️ Mail transporter not initialized. Skipping emails.');
-        return;
-      }
-    }
+    if (emailRecipients.length === 0) return;
 
     for (const contact of emailRecipients) {
       let htmlContent = `
@@ -285,13 +363,12 @@ async function sendAlertEmails(user, contacts, alert, isInitial = false) {
       `;
 
       const attachments = [];
-      
       if (!isInitial && alert.evidence && alert.evidence.files && alert.evidence.files.length > 0) {
         htmlContent += `
             <div style="margin-top: 24px; border-top: 1px solid #e1e1e1; padding-top: 20px;">
               <h3 style="margin: 0 0 12px 0; color: #374151; font-size: 14px; font-weight: bold;">🔒 RECORDED EVIDENCE ENCLOSED:</h3>
               <p style="font-size: 12px; color: #6b7280; line-height: 1.5; margin-bottom: 16px;">
-                Find live evidence files linked and attached to this email. For real-time updates, use the broadcast tracker link above.
+                Find live evidence files linked and attached to this email.
               </p>
               <ul style="font-size: 13px; line-height: 1.6; color: #4b5563; padding-left: 20px;">
         `;
@@ -301,7 +378,7 @@ async function sendAlertEmails(user, contacts, alert, isInitial = false) {
           htmlContent += `
             <li><strong>${file.type.toUpperCase()}:</strong> <a href="${fileUrl}" style="color: #ef4444; text-decoration: underline;">Open ${file.type} file</a></li>
           `;
-          
+
           const filePath = path.join(EVIDENCE_DIR, path.basename(file.url));
           if (fs.existsSync(filePath)) {
             if (process.env.RESEND_API_KEY) {
@@ -340,20 +417,27 @@ async function sendAlertEmails(user, contacts, alert, isInitial = false) {
         </div>
       `;
 
-      const subject = isInitial 
-        ? `🚨 SilentSOS INITIAL WARNING: Emergency alert triggered by ${user.name}` 
+      const subject = isInitial
+        ? `🚨 SilentSOS INITIAL WARNING: Emergency alert triggered by ${user.name}`
         : `🔒 SilentSOS EVIDENCE ENCLOSED: Emergency alert update for ${user.name}`;
 
-      await dispatchEmail({
-        to: contact.email,
-        subject,
-        html: htmlContent,
-        attachments
-      });
+      try {
+        await dispatchEmail({
+          to: contact.email,
+          subject,
+          html: htmlContent,
+          attachments
+        });
+        // Update notification status in Neon PostgreSQL
+        await db.updateNotificationStatus(alertId, contact.id, 'email', 'DELIVERED');
+      } catch (sendErr) {
+        console.error(`Failed to send alert email to ${contact.email}:`, sendErr.message);
+        await db.updateNotificationStatus(alertId, contact.id, 'email', 'FAILED', sendErr.message);
+      }
     }
   } catch (err) {
     lastMailError = { message: err.message, stack: err.stack, time: new Date().toISOString() };
-    console.error('❌ Failed to send alert emails:', err);
+    console.error('❌ Failed to process alert emails:', err);
   }
 }
 
@@ -362,8 +446,7 @@ async function sendCancelEmail(user, contacts, alert) {
   try {
     const alertId = alert.id;
     const timeStr = new Date().toLocaleTimeString();
-    
-    // Append global email recipients from administrator settings
+
     const globalSettings = await db.getSettings('global');
     let extraRecipients = [];
     if (globalSettings && globalSettings.globalEmergencyEmails) {
@@ -400,7 +483,7 @@ async function sendCancelEmail(user, contacts, alert) {
             </p>
             
             <div style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 16px; margin: 20px 0;">
-              <p style="margin: 0; color: #065f46; font-size: 14px; font-weight: bold;">STATUS Update:</p>
+              <p style="margin: 0; color: #065f46; font-size: 14px; font-weight: bold;">STATUS UPDATE:</p>
               <ul style="margin: 8px 0 0 0; padding-left: 20px; font-size: 13px; line-height: 1.6; color: #064e3b;">
                 <li><strong>Distress Type:</strong> ${alert.type || 'General'}</li>
                 <li><strong>Current Status:</strong> Cancelled (User is safe)</li>
@@ -409,7 +492,7 @@ async function sendCancelEmail(user, contacts, alert) {
             </div>
             
             <p style="font-size: 12px; color: #6b7280; line-height: 1.5; border-top: 1px solid #e1e1e1; padding-top: 15px;">
-              No further emergency action is required. You can still review the captured evidence and track logs at the original broadcast link.
+              No further emergency action is required.
             </p>
           </div>
           <div style="background-color: #f3f4f6; color: #6b7280; padding: 16px; text-align: center; font-size: 11px; border-top: 1px solid #e1e1e1;">
@@ -420,12 +503,13 @@ async function sendCancelEmail(user, contacts, alert) {
       `;
 
       const subject = `✅ SilentSOS RESOLVED: Emergency alert cancelled by ${user.name}`;
-
-      await dispatchEmail({
-        to: contact.email,
-        subject,
-        html: htmlContent
-      });
+      try {
+        await dispatchEmail({
+          to: contact.email,
+          subject,
+          html: htmlContent
+        });
+      } catch (e) { }
     }
   } catch (err) {
     console.error('❌ Failed to send cancel emails:', err);
@@ -441,7 +525,6 @@ function scheduleEvidenceEmail(userId, alertId) {
 
   const timer = setTimeout(async () => {
     emailDebounceTimers.delete(alertId);
-    
     try {
       const user = await db.getUser(userId);
       let contacts = await db.getContacts(userId);
@@ -465,22 +548,114 @@ function scheduleEvidenceEmail(userId, alertId) {
     } catch (err) {
       console.error('Failed to send debounced evidence email:', err);
     }
-  }, 4000); // 4 seconds debounce
+  }, 4000);
 
   emailDebounceTimers.set(alertId, timer);
 }
 
+// Fast2SMS Real-Time Emergency SMS Gateway
+async function dispatchFast2SMS(alertId, contacts, numbers, message) {
+  const apiKey = process.env.FAST2SMS_API_KEY;
+  if (!apiKey) return { success: false, reason: 'No API key' };
+
+  const numberList = (Array.isArray(numbers) ? numbers : [numbers])
+    .map(n => String(n || '').replace(/\D/g, ''))
+    .map(n => n.length === 12 && n.startsWith('91') ? n.substring(2) : n)
+    .filter(n => n.length === 10);
+
+  if (numberList.length === 0) return { success: false, reason: 'No valid numbers' };
+
+  const numberStr = numberList.join(',');
+  console.log(`📱 Dispatching live Fast2SMS emergency alert to: ${numberStr}`);
+
+  try {
+    const response = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+      method: 'POST',
+      headers: {
+        'authorization': apiKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        route: 'q',
+        message: message,
+        language: 'english',
+        flash: 0,
+        numbers: numberStr
+      })
+    });
+
+    const data = await response.json();
+    const status = response.ok ? 'DELIVERED' : 'FAILED';
+    for (const c of contacts) {
+      if (c.phone) {
+        await db.updateNotificationStatus(alertId, c.id, 'sms', status, response.ok ? null : JSON.stringify(data));
+      }
+    }
+    return { success: response.ok, data };
+  } catch (err) {
+    console.error('❌ Fast2SMS dispatch error:', err.message);
+    for (const c of contacts) {
+      if (c.phone) {
+        await db.updateNotificationStatus(alertId, c.id, 'sms', 'FAILED', err.message);
+      }
+    }
+    return { success: false, error: err.message };
+  }
+}
+
+// Notification dispatch logger helper
+function dispatchEmergencyAlerts(user, contacts, alertId, lat = 19.076, lng = 72.8777) {
+  const timeStr = new Date().toLocaleTimeString();
+  const mapsLink = `https://maps.google.com/?q=${lat},${lng}`;
+  const broadcastLink = `${FRONTEND_URL}/receiver/${alertId}`;
+
+  return contacts.map(c => {
+    return {
+      contactId: c.id,
+      contactName: c.name,
+      phone: c.phone,
+      email: c.email,
+      channels: {
+        sms: {
+          status: c.preferences && c.preferences.message !== false ? 'Delivered' : 'Skipped',
+          service: 'Fast2SMS Emergency Gateway',
+          payload: `🚨 SOS! ${c.name}, ${user.name} triggered a safety alert! Time: ${timeStr}. Location: ${mapsLink}`,
+          timestamp: Date.now()
+        },
+        whatsapp: {
+          status: c.preferences && c.preferences.message ? 'Delivered' : 'Skipped',
+          service: 'Meta Cloud API v16.0',
+          payload: `🚨 *SilentSOS EMERGENCY ALERT* 🚨\nUser *${user.name}* needs help.\n- Time: ${timeStr}\n- Live Map: ${broadcastLink}\n- Google Maps: ${mapsLink}`,
+          timestamp: Date.now()
+        },
+        email: {
+          status: c.preferences && c.preferences.email !== false ? 'Delivered' : 'Skipped',
+          service: 'Nodemailer / Resend Transport',
+          payload: `Dear ${c.name},\n\nThis is an automated emergency notification from SilentSOS. User ${user.name} has triggered an alert. Review live evidence: ${broadcastLink}`,
+          timestamp: Date.now()
+        },
+        push: {
+          status: 'Delivered',
+          service: 'Web Push / FCM Gateway',
+          payload: `EMERGENCY ALERT: ${user.name} needs help! Tap to view live tracker.`,
+          timestamp: Date.now()
+        }
+      }
+    };
+  });
+}
+
+// Middleware
 app.use(cors({ origin: '*', methods: ['GET','POST','PUT','DELETE','OPTIONS'], allowedHeaders: ['*'] }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use('/evidence', express.static(EVIDENCE_DIR));
 
-// Serve static files from the React frontend app build directory in production
+// Serve static frontend assets in production
 const frontendBuildPath = path.join(__dirname, '../frontend/dist');
 if (fs.existsSync(frontendBuildPath)) {
   app.use(express.static(frontendBuildPath));
   console.log(`🚀 Serving frontend static assets from: ${frontendBuildPath}`);
 } else {
-  // Health check / root route (only if frontend build is not served directly)
   app.get('/', (req, res) => {
     res.send(`
       <!DOCTYPE html>
@@ -497,7 +672,7 @@ if (fs.existsSync(frontendBuildPath)) {
       <body>
         <div class="card">
           <h1>🚨 SilentSOS</h1>
-          <div class="badge">✓ Backend Online</div>
+          <div class="badge">✓ Neon PostgreSQL Connected</div>
           <p>API is running and ready.</p>
           <p style="font-size:12px; margin-top:20px;">Frontend: <a href="${FRONTEND_URL}" style="color:#f472b6;">${FRONTEND_URL}</a></p>
         </div>
@@ -507,6 +682,7 @@ if (fs.existsSync(frontendBuildPath)) {
   });
 }
 
+// Public Debug Route
 app.get('/api/debug/mail', (req, res) => {
   res.json({
     envHost: process.env.SMTP_HOST,
@@ -519,50 +695,34 @@ app.get('/api/debug/mail', (req, res) => {
   });
 });
 
-app.get('/api/debug/last-alert', async (req, res) => {
-  try {
-    const history = await db.getAllHistory();
-    if (history.length === 0) {
-      return res.json({ message: 'No alerts in history' });
-    }
-    const lastAlert = history[0];
-    const user = await db.getUser(lastAlert.userId);
-    const contacts = await db.getContacts(lastAlert.userId);
-    res.json({
-      lastAlert,
-      user,
-      contacts
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message, stack: err.stack });
-  }
-});
-
-// Simple JWT-like base64 Token Authentication middleware
+// Authentication Middleware
 async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  
+
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized: No token provided' });
   }
 
   try {
-    const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+    const decoded = verifyToken(token);
     req.userId = decoded.userId;
 
     const user = await db.getUser(req.userId);
-    if (user && user.disabled) {
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized: User not found' });
+    }
+    if (user.disabled) {
       return res.status(403).json({ error: 'Your account has been disabled by an administrator.' });
     }
 
     next();
   } catch (err) {
-    return res.status(403).json({ error: 'Forbidden: Invalid token' });
+    return res.status(403).json({ error: `Forbidden: ${err.message}` });
   }
 }
 
-// Admin role check middleware
+// Administrator check middleware
 async function requireAdmin(req, res, next) {
   const user = await db.getUser(req.userId);
   if (!user || user.role !== 'admin') {
@@ -571,22 +731,19 @@ async function requireAdmin(req, res, next) {
   next();
 }
 
-// In-memory active alert reference
+// Active SOS state & WebSocket broadcast
 let activeAlert = null;
-
-// Track connected WebSocket clients
 const wsClients = new Map();
 
 wss.on('connection', (ws) => {
-  ws.on('message', (message) => {
+  ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message);
-      
+
       if (data.type === 'register') {
         wsClients.set(ws, { role: data.role, alertId: data.alertId });
         console.log(`Registered WS client: ${data.role} for Alert ID: ${data.alertId}`);
-        
-        // Push initial alert package to receiver immediately
+
         if (data.role === 'receiver' && activeAlert && activeAlert.id === data.alertId) {
           ws.send(JSON.stringify({
             type: 'alert_update',
@@ -598,29 +755,23 @@ wss.on('connection', (ws) => {
       if (data.type === 'gps_update') {
         const clientInfo = wsClients.get(ws);
         if (clientInfo && clientInfo.role === 'sender') {
-          const { lat, lng, timestamp } = data;
+          const { lat, lng, timestamp, accuracy } = data;
 
           if (activeAlert && activeAlert.id === clientInfo.alertId) {
-            const gpsPoint = { 
-              lat, 
-              lng, 
+            const gpsPoint = {
+              lat,
+              lng,
+              accuracy: accuracy || null,
               timestamp: timestamp || Date.now(),
               googleMapsLink: `https://maps.google.com/?q=${lat},${lng}`
             };
             activeAlert.gpsPath.push(gpsPoint);
-            
-            // Sync with DB history (encrypts path inside db.js)
-            db.updateHistoryEvent(activeAlert.id, { gpsPath: activeAlert.gpsPath });
 
-            // Save GPS history as evidence file
-            try {
-              const gpsFilePath = path.join(EVIDENCE_DIR, `gps_path_${activeAlert.id}.json`);
-              fs.writeFileSync(gpsFilePath, JSON.stringify(activeAlert.gpsPath, null, 2));
-            } catch (err) {
-              console.error('Failed to write GPS path to evidence file:', err);
-            }
+            // Persist location into Neon PostgreSQL tables
+            await db.updateHistoryEvent(activeAlert.id, { gpsPath: activeAlert.gpsPath });
+            await db.addGpsLocation(activeAlert.id, lat, lng, gpsPoint.timestamp, accuracy);
 
-            // Broadcast updates
+            // Broadcast to connected receivers
             broadcastToReceivers(activeAlert.id, {
               type: 'gps_update',
               gpsPoint
@@ -647,122 +798,43 @@ function broadcastToReceivers(alertId, messageObj) {
   }
 }
 
-// Fast2SMS Real-Time Emergency SMS Gateway
-async function dispatchFast2SMS(numbers, message) {
-  const apiKey = process.env.FAST2SMS_API_KEY;
-  if (!apiKey) {
-    console.log('ℹ️ Fast2SMS API key not configured, skipping real SMS dispatch.');
-    return { success: false, reason: 'No API key' };
-  }
-
-  // Clean numbers: Extract valid 10-digit Indian numbers
-  const numberList = (Array.isArray(numbers) ? numbers : [numbers])
-    .map(n => String(n || '').replace(/\D/g, ''))
-    .map(n => n.length === 12 && n.startsWith('91') ? n.substring(2) : n)
-    .filter(n => n.length === 10);
-
-  if (numberList.length === 0) {
-    console.log('ℹ️ No valid 10-digit phone numbers found for Fast2SMS dispatch.');
-    return { success: false, reason: 'No valid numbers' };
-  }
-
-  const numberStr = numberList.join(',');
-  console.log(`📱 Dispatching live Fast2SMS emergency alert to: ${numberStr}`);
-
-  try {
-    const response = await fetch('https://www.fast2sms.com/dev/bulkV2', {
-      method: 'POST',
-      headers: {
-        'authorization': apiKey,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        route: 'q',
-        message: message,
-        language: 'english',
-        flash: 0,
-        numbers: numberStr
-      })
-    });
-
-    const data = await response.json();
-    console.log('📱 Fast2SMS Dispatch Result:', data);
-    return { success: response.ok, data };
-  } catch (err) {
-    console.error('❌ Fast2SMS dispatch error:', err.message);
-    return { success: false, error: err.message };
-  }
-}
-
-// Notification dispatch logger
-function dispatchEmergencyAlerts(user, contacts, alertId, lat = 19.076, lng = 72.8777) {
-  const timeStr = new Date().toLocaleTimeString();
-  const mapsLink = `https://maps.google.com/?q=${lat},${lng}`;
-  const broadcastLink = `${FRONTEND_URL}/receiver/${alertId}`;
-
-  return contacts.map(c => {
-    return {
-      contactId: c.id,
-      contactName: c.name,
-      phone: c.phone,
-      email: c.email,
-      channels: {
-        sms: {
-          status: c.preferences && c.preferences.message !== false ? 'Delivered' : 'Skipped',
-          service: 'Fast2SMS Emergency Gateway',
-          payload: `🚨 SOS! ${c.name}, ${user.name} triggered a safety alert! Time: ${timeStr}. Location: ${mapsLink}`,
-          timestamp: Date.now()
-        },
-        whatsapp: {
-          status: c.preferences.message ? 'Delivered' : 'Skipped',
-          service: 'Meta Cloud API v16.0',
-          payload: `🚨 *SilentSOS EMERGENCY ALERT* 🚨\nUser *${user.name}* needs help.\n- Time: ${timeStr}\n- Live Map: ${broadcastLink}\n- Google Maps: ${mapsLink}`,
-          timestamp: Date.now()
-        },
-        email: {
-          status: c.preferences.email ? 'Delivered' : 'Skipped',
-          service: 'SendGrid SMTP Transport',
-          payload: `Dear ${c.name},\n\nThis is an automated emergency notification from SilentSOS. User ${user.name} has triggered an alert. Review live evidence and coordinate paths: ${broadcastLink}`,
-          timestamp: Date.now()
-        },
-        push: {
-          status: 'Delivered',
-          service: 'Firebase Cloud Messaging (FCM)',
-          payload: `EMERGENCY ALERT: ${user.name} needs help! Tap to view live location tracker.`,
-          timestamp: Date.now()
-        }
-      }
-    };
-  });
-}
-
-// 🔓 PUBLIC ROUTE: Authorization (Login / Registration)
-app.post('/api/auth/register', async (req, res) => {
+// ==========================================
+// 🔓 PUBLIC AUTHENTICATION ROUTES
+// ==========================================
+app.post('/api/auth/register', rateLimiter(10, 60000), async (req, res) => {
   const { email, password, name } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required.' });
+  }
+
   try {
     const user = await db.registerUser(email, password, name);
-    const token = Buffer.from(JSON.stringify({ userId: user.id })).toString('base64');
+    const token = generateToken({ userId: user.id, email: user.email });
     res.json({ token, user });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', rateLimiter(15, 60000), async (req, res) => {
   const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required.' });
+  }
+
   try {
     const user = await db.authenticateUser(email, password);
     if (user.disabled) {
       return res.status(403).json({ error: 'Your account has been disabled by an administrator.' });
     }
-    const token = Buffer.from(JSON.stringify({ userId: user.id })).toString('base64');
+    const token = generateToken({ userId: user.id, email: user.email });
     res.json({ token, user });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.post('/api/auth/forgot-password', async (req, res) => {
+app.post('/api/auth/forgot-password', rateLimiter(5, 60000), async (req, res) => {
   const { email } = req.body;
   if (!email || !email.trim()) {
     return res.status(400).json({ error: 'Please provide a valid email address.' });
@@ -771,28 +843,27 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     const user = await db.getUserByEmail(email.trim());
     if (!user) {
-      return res.status(404).json({ error: 'No account found with this email address.' });
+      // Return generic message to prevent email enumeration
+      return res.json({ success: true, message: 'If an account exists, a verification code was sent.' });
     }
 
-    // Generate 6-digit verification code OTP
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
 
     await db.createPasswordReset(email.trim(), code, expiresAt);
 
-    // Send Gmail notification with verification code
     const emailHtml = `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 540px; margin: 0 auto; background-color: #0d0d12; color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1);">
+      <div style="font-family: Arial, sans-serif; max-width: 540px; margin: 0 auto; background-color: #0d0d12; color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1);">
         <div style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); padding: 32px 24px; text-align: center;">
-          <h1 style="margin: 0; font-size: 26px; font-weight: 800; color: #ffffff; letter-spacing: 1px;">SilentSOS</h1>
-          <p style="margin: 6px 0 0 0; font-size: 13px; color: rgba(255, 255, 255, 0.85); text-transform: uppercase; letter-spacing: 2px; font-weight: 600;">Password Reset Verification</p>
+          <h1 style="margin: 0; font-size: 26px; font-weight: 800; color: #ffffff;">SilentSOS</h1>
+          <p style="margin: 6px 0 0 0; font-size: 13px; color: rgba(255, 255, 255, 0.85); text-transform: uppercase; letter-spacing: 2px;">Password Reset Verification</p>
         </div>
         <div style="padding: 32px 24px; background-color: #12121a;">
-          <p style="font-size: 15px; line-height: 1.6; color: rgba(255, 255, 255, 0.85); margin-top: 0;">
+          <p style="font-size: 15px; color: rgba(255, 255, 255, 0.85); margin-top: 0;">
             Hello <strong>${user.name || 'User'}</strong>,
           </p>
           <p style="font-size: 14px; line-height: 1.6; color: rgba(255, 255, 255, 0.7);">
-            We received a request to reset your SilentSOS account password. Use the 6-digit verification code below to complete your password reset:
+            We received a request to reset your SilentSOS password. Use the 6-digit verification code below:
           </p>
           <div style="margin: 28px 0; text-align: center;">
             <div style="display: inline-block; background: rgba(220, 38, 38, 0.12); border: 2px dashed #ef4444; border-radius: 12px; padding: 16px 36px;">
@@ -802,16 +873,6 @@ app.post('/api/auth/forgot-password', async (req, res) => {
               ⏱️ This code will expire in <strong>10 minutes</strong>.
             </p>
           </div>
-          <div style="background: rgba(255, 255, 255, 0.03); border-left: 3px solid #ef4444; padding: 12px 16px; border-radius: 6px; margin-top: 24px;">
-            <p style="margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.6); line-height: 1.5;">
-              <strong>Security Notice:</strong> If you did not request this password reset, please ignore this email or make sure your account is secure.
-            </p>
-          </div>
-        </div>
-        <div style="padding: 16px 24px; background-color: #0a0a0f; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.05);">
-          <p style="margin: 0; font-size: 11px; color: rgba(255, 255, 255, 0.3);">
-            SilentSOS — Discreet Personal Safety Assistant
-          </p>
         </div>
       </div>
     `;
@@ -829,7 +890,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   }
 });
 
-app.post('/api/auth/reset-password', async (req, res) => {
+app.post('/api/auth/reset-password', rateLimiter(10, 60000), async (req, res) => {
   const { email, code, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and new password are required.' });
@@ -841,32 +902,6 @@ app.post('/api/auth/reset-password', async (req, res) => {
     } else {
       await db.resetPassword(email, password);
     }
-
-    // Non-blocking notification email
-    try {
-      const confirmHtml = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 540px; margin: 0 auto; background-color: #0d0d12; color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1);">
-          <div style="background: linear-gradient(135deg, #10b981 0%, #047857 100%); padding: 24px; text-align: center;">
-            <h1 style="margin: 0; font-size: 24px; font-weight: 800; color: #ffffff;">SilentSOS</h1>
-            <p style="margin: 4px 0 0 0; font-size: 12px; color: rgba(255, 255, 255, 0.9); text-transform: uppercase; letter-spacing: 2px;">Security Alert</p>
-          </div>
-          <div style="padding: 28px 24px; background-color: #12121a;">
-            <p style="font-size: 15px; color: rgba(255, 255, 255, 0.9); margin-top: 0;">
-              Your SilentSOS password was successfully reset.
-            </p>
-            <p style="font-size: 13px; color: rgba(255, 255, 255, 0.6); line-height: 1.6;">
-              If you did not perform this action, please log in immediately and update your password.
-            </p>
-          </div>
-        </div>
-      `;
-      dispatchEmail({
-        to: email.trim(),
-        subject: '✅ SilentSOS Password Reset Successful',
-        html: confirmHtml
-      }).catch(e => console.warn('Non-blocking confirmation email failed:', e.message));
-    } catch (e) { }
-
     res.json({ success: true, message: 'Password reset successful' });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -877,12 +912,10 @@ app.post('/api/auth/reset-password', async (req, res) => {
 app.get('/api/alerts/:id', async (req, res) => {
   const alertId = req.params.id;
 
-  // First check in-memory active alert
   if (activeAlert && activeAlert.id === alertId) {
     return res.json(activeAlert);
   }
 
-  // Search all users' history using the DB helper which handles decryption
   const dbState = await db.getAllHistory();
   const decryptedAlert = dbState.find(e => e.id === alertId);
   if (decryptedAlert) {
@@ -892,7 +925,7 @@ app.get('/api/alerts/:id', async (req, res) => {
   res.status(404).json({ error: 'Alert not found' });
 });
 
-// 🔓 PUBLIC ROUTE: Upload media evidence (alertId is the shared secret)
+// 🔓 PUBLIC ROUTE: Upload media evidence (alertId acts as authorization secret)
 app.post('/api/alerts/:id/evidence', upload.fields([
   { name: 'photo', maxCount: 10 },
   { name: 'video', maxCount: 1 },
@@ -900,7 +933,6 @@ app.post('/api/alerts/:id/evidence', upload.fields([
 ]), async (req, res) => {
   const alertId = req.params.id;
 
-  // Always prefer the live activeAlert reference so in-memory mutations stick
   const isActive = activeAlert && activeAlert.id === alertId;
   let alert = isActive ? activeAlert : null;
 
@@ -920,32 +952,35 @@ app.post('/api/alerts/:id/evidence', upload.fields([
   const fileUrls = [];
 
   if (files) {
-    Object.keys(files).forEach(fieldName => {
-      files[fieldName].forEach(file => {
+    for (const fieldName of Object.keys(files)) {
+      for (const file of files[fieldName]) {
         const fileUrl = `/evidence/${file.filename}`;
         const entry = { type: fieldName, url: fileUrl, timestamp: Date.now() };
         fileUrls.push(entry);
         if (fieldName === 'photo') alert.evidence.photos += 1;
         if (fieldName === 'video') alert.evidence.videos += 1;
-        if (fieldName === 'audio') alert.evidence.audio  += 1;
-        console.log(`📁 Evidence saved: ${file.filename} (${fieldName}) for alert ${alertId}`);
-      });
-    });
+        if (fieldName === 'audio') alert.evidence.audio += 1;
+
+        // Save into evidence_metadata in Neon PostgreSQL
+        await db.recordEvidenceMetadata(alertId, alert.userId, fieldName, fileUrl, file.path, file.mimetype, file.size);
+      }
+    }
   }
 
   alert.evidence.files.push(...fileUrls);
   await db.updateHistoryEvent(alertId, { evidence: alert.evidence });
   broadcastToReceivers(alertId, { type: 'evidence_update', evidence: alert.evidence });
 
-  // Schedule email dispatch with new evidence
   scheduleEvidenceEmail(alert.userId, alertId);
-
   res.json({ success: true, evidence: alert.evidence });
 });
 
-// 🔒 PROTECTED ROUTES: Require token authorization header
+// ==========================================
+// 🔒 PROTECTED USER & SOS ROUTES
+// ==========================================
 app.use('/api', authenticateToken);
 
+// User State
 app.get('/api/state', async (req, res) => {
   const userId = req.userId;
   const user = await db.getUser(userId);
@@ -973,6 +1008,20 @@ app.post('/api/user/setup-complete', async (req, res) => {
   res.json(user);
 });
 
+app.get('/api/user/profile', async (req, res) => {
+  const user = await db.getUser(req.userId);
+  res.json(user);
+});
+
+app.put('/api/user/profile', async (req, res) => {
+  try {
+    const user = await db.updateUserProfile(req.userId, req.body);
+    res.json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.post('/api/user', async (req, res) => {
   try {
     const { name, password, address, bloodGroup, fatherName, motherName } = req.body;
@@ -982,9 +1031,8 @@ app.post('/api/user', async (req, res) => {
     if (bloodGroup !== undefined) updates.bloodGroup = bloodGroup;
     if (fatherName !== undefined) updates.fatherName = fatherName;
     if (motherName !== undefined) updates.motherName = motherName;
-    if (password !== undefined && password.trim() !== '') {
-      updates.password = password;
-    }
+    if (password !== undefined && password.trim() !== '') updates.password = password;
+
     const user = await db.adminUpdateUser(req.userId, updates);
     res.json(user);
   } catch (err) {
@@ -992,6 +1040,7 @@ app.post('/api/user', async (req, res) => {
   }
 });
 
+// Contacts CRUD (strictly bound to req.userId)
 app.get('/api/contacts', async (req, res) => {
   res.json(await db.getContacts(req.userId));
 });
@@ -1011,6 +1060,7 @@ app.delete('/api/contacts/:id', async (req, res) => {
   res.json(contacts);
 });
 
+// Settings & Gestures
 app.get('/api/settings', async (req, res) => {
   res.json(await db.getSettings(req.userId));
 });
@@ -1020,17 +1070,34 @@ app.put('/api/settings', async (req, res) => {
   res.json(settings);
 });
 
-app.get('/api/alerts', async (req, res) => {
-  res.json(await db.getHistory(req.userId));
+app.get('/api/gestures', async (req, res) => {
+  res.json(await db.getGestureConfig(req.userId));
 });
 
-// Trigger a new alert
+app.put('/api/gestures', async (req, res) => {
+  const config = await db.saveGestureConfig(req.userId, req.body);
+  res.json(config);
+});
+
+// SOS Alerts & History
+app.get('/api/alerts', async (req, res) => {
+  const page = parseInt(req.query.page || '1');
+  const limit = parseInt(req.query.limit || '50');
+  res.json(await db.getHistory(req.userId, page, limit));
+});
+
+app.get('/api/sos/history', async (req, res) => {
+  const page = parseInt(req.query.page || '1');
+  const limit = parseInt(req.query.limit || '50');
+  res.json(await db.getHistory(req.userId, page, limit));
+});
+
+// Trigger a new SOS alert (Atomic Database Transaction)
 app.post('/api/alerts', async (req, res) => {
   const userId = req.userId;
   const user = await db.getUser(userId);
   let contacts = await db.getContacts(userId);
 
-  // Fallback to default responders if user has no contacts configured
   if (contacts.length === 0) {
     contacts = [
       { id: 'police-dispatch', name: 'Emergency Police Dispatch', phone: '911', email: 'dispatch@emergency.gov', preferences: { gps: true, photos: true, video: true, audio: true, message: true } },
@@ -1038,21 +1105,25 @@ app.post('/api/alerts', async (req, res) => {
     ];
   }
 
-  const { type, location } = req.body;
+  const { type, location, id: clientId } = req.body;
 
   if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
-    return res.status(400).json({ error: 'Location access is required to trigger an SOS alert. Please ensure location services are enabled.' });
+    return res.status(400).json({ error: 'Location access is required to trigger an SOS alert.' });
   }
 
-  const id = Date.now().toString();
+  // Idempotency check: if client supplied an ID and it already exists, return it
+  const alertId = clientId || Date.now().toString();
+  if (activeAlert && activeAlert.id === alertId) {
+    return res.json(activeAlert);
+  }
+
   const initialLat = location.lat;
   const initialLng = location.lng;
-
-  // Generate notification dispatch logs
-  const dispatchLogs = dispatchEmergencyAlerts(user, contacts, id, initialLat, initialLng);
+  const initialAccuracy = location.accuracy || null;
+  const dispatchLogs = dispatchEmergencyAlerts(user, contacts, alertId, initialLat, initialLng);
 
   const newAlert = {
-    id,
+    id: alertId,
     userId,
     timestamp: location.timestamp || Date.now(),
     type: type || 'General',
@@ -1068,34 +1139,33 @@ app.post('/api/alerts', async (req, res) => {
     gpsPath: [{
       lat: initialLat,
       lng: initialLng,
+      accuracy: initialAccuracy,
       timestamp: location.timestamp || Date.now(),
       googleMapsLink: location.googleMapsLink || `https://maps.google.com/?q=${initialLat},${initialLng}`
     }]
   };
 
   activeAlert = newAlert;
-  
-  // Save event
+
+  // Save atomic event into Neon PostgreSQL (history, locations, notifications)
   await db.addHistoryEvent(userId, newAlert);
 
-  console.log(`SOS active for user ${user.name}. Alert ID: ${id}`);
-  
-  // Automatically dispatch emergency alert notification email (immediate, Email 1)
+  console.log(`SOS active for user ${user.name}. Alert ID: ${alertId}`);
+
+  // Dispatch live alerts (Email and SMS)
   sendAlertEmails(user, contacts, newAlert, true);
 
-  // Automatically dispatch emergency SMS text messages via Fast2SMS
   const smsNumbers = contacts
     .filter(c => c.phone && c.preferences && c.preferences.message !== false)
     .map(c => c.phone);
 
   if (smsNumbers.length > 0) {
     const timeStr = new Date().toLocaleTimeString();
-    const smsMessage = `🚨 SOS EMERGENCY! ${user.name || 'User'} triggered a safety alert at ${timeStr}. Live Google Maps: https://maps.google.com/?q=${initialLat},${initialLng} - SilentSOS`;
-    dispatchFast2SMS(smsNumbers, smsMessage);
+    const smsMessage = `🚨 SOS EMERGENCY! ${user.name || 'User'} triggered safety alert at ${timeStr}. Live: https://maps.google.com/?q=${initialLat},${initialLng} - SilentSOS`;
+    dispatchFast2SMS(alertId, contacts, smsNumbers, smsMessage);
   }
 
-  // Schedule Email 2: Send evidence files exactly 20 seconds after trigger
-  const alertId = id;
+  // Schedule 20-second automatic evidence capture follow-up email
   const timer = setTimeout(async () => {
     activeAlertTimers.delete(alertId);
     if (!sentEvidenceAlerts.has(alertId)) {
@@ -1107,11 +1177,11 @@ app.post('/api/alerts', async (req, res) => {
           alert = allHistory.find(e => e.id === alertId) || null;
         }
         if (alert) {
-          console.log(`✉️ 20-second timer fired! Automatically dispatching evidence email for alert: ${alertId}`);
+          console.log(`✉️ 20-second timer fired: dispatching evidence email for alert ${alertId}`);
           await sendAlertEmails(user, contacts, alert, false);
         }
       } catch (err) {
-        console.error('Failed to send 20-second scheduled evidence email:', err);
+        console.error('Failed to send 20-second evidence email:', err);
       }
     }
   }, 20000);
@@ -1120,79 +1190,15 @@ app.post('/api/alerts', async (req, res) => {
   res.json(newAlert);
 });
 
-// Upload media evidence
-app.post('/api/alerts/:id/evidence', upload.fields([
-  { name: 'photo', maxCount: 10 },
-  { name: 'video', maxCount: 1 },
-  { name: 'audio', maxCount: 1 }
-]), async (req, res) => {
-  const alertId = req.params.id;
-
-  // Always prefer the live activeAlert reference so in-memory mutations stick
-  const isActive = activeAlert && activeAlert.id === alertId;
-  let alert = isActive ? activeAlert : null;
-
-  if (!alert) {
-    // Fallback: look up in persisted history
-    const allHistory = await db.getAllHistory();
-    alert = allHistory.find(e => e.id === alertId) || null;
-  }
-
-  if (!alert) {
-    return res.status(404).json({ error: 'Alert not found' });
-  }
-
-  // Ensure evidence structure exists
-  if (!alert.evidence) alert.evidence = { photos: 0, videos: 0, audio: 0, files: [] };
-  if (!alert.evidence.files) alert.evidence.files = [];
-
-  const files = req.files;
-  const fileUrls = [];
-
-  if (files) {
-    Object.keys(files).forEach(fieldName => {
-      files[fieldName].forEach(file => {
-        const fileUrl = `/evidence/${file.filename}`;
-        const entry = { type: fieldName, url: fileUrl, timestamp: Date.now() };
-        fileUrls.push(entry);
-
-        if (fieldName === 'photo') alert.evidence.photos += 1;
-        if (fieldName === 'video') alert.evidence.videos += 1;
-        if (fieldName === 'audio') alert.evidence.audio  += 1;
-
-        console.log(`📁 Evidence saved: ${file.filename} (${fieldName}) for alert ${alertId}`);
-      });
-    });
-  }
-
-  alert.evidence.files.push(...fileUrls);
-
-  // Persist to DB
-  await db.updateHistoryEvent(alertId, { evidence: alert.evidence });
-
-  // Broadcast to live receiver dashboards
-  broadcastToReceivers(alertId, {
-    type: 'evidence_update',
-    evidence: alert.evidence
-  });
-
-  // Schedule email dispatch with new evidence
-  scheduleEvidenceEmail(alert.userId, alertId);
-
-  res.json({ success: true, evidence: alert.evidence });
-});
-
-// Complete active alert capturing and dispatch immediate email
+// Complete active alert capturing
 app.post('/api/alerts/:id/complete', async (req, res) => {
   const alertId = req.params.id;
 
-  // Clear any pending debounce timer
   if (emailDebounceTimers.has(alertId)) {
     clearTimeout(emailDebounceTimers.get(alertId));
     emailDebounceTimers.delete(alertId);
   }
 
-  // Clear the 20-second scheduled timer if active
   if (activeAlertTimers.has(alertId)) {
     clearTimeout(activeAlertTimers.get(alertId));
     activeAlertTimers.delete(alertId);
@@ -1216,29 +1222,25 @@ app.post('/api/alerts/:id/complete', async (req, res) => {
             { id: 'trusted-responders', name: 'Trusted Emergency Responders', phone: '+15550199', email: 'responders@silentsos.org', preferences: { gps: true, photos: true, video: true, audio: true, message: true } }
           ];
         }
-
-        console.log(`✉️ Alert complete! Immediately dispatching evidence email for alert: ${alertId}`);
         await sendAlertEmails(user, contacts, alert, false);
       }
       return res.json({ success: true });
     }
     res.status(404).json({ error: 'Alert not found' });
   } catch (err) {
-    console.error('Failed to send immediate evidence email:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Stop active alert
+// Stop / Resolve active alert
 app.post('/api/alerts/:id/stop', async (req, res) => {
   const alertId = req.params.id;
 
-  // Clear any active scheduled timers
   if (activeAlertTimers.has(alertId)) {
     clearTimeout(activeAlertTimers.get(alertId));
     activeAlertTimers.delete(alertId);
   }
-  
+
   let alert = (activeAlert && activeAlert.id === alertId) ? activeAlert : null;
   if (!alert) {
     const allHistory = await db.getAllHistory();
@@ -1247,13 +1249,13 @@ app.post('/api/alerts/:id/stop', async (req, res) => {
 
   if (alert) {
     const durationSeconds = Math.round((Date.now() - alert.timestamp) / 1000);
-    
     alert.durationSeconds = durationSeconds;
-    alert.status = 'Sent'; // Resolved status
+    alert.status = 'Sent';
 
     await db.updateHistoryEvent(alertId, {
       durationSeconds,
-      status: 'Sent'
+      status: 'Sent',
+      resolutionTime: Date.now()
     });
 
     broadcastToReceivers(alertId, {
@@ -1274,12 +1276,11 @@ app.post('/api/alerts/:id/stop', async (req, res) => {
 app.post('/api/alerts/:id/cancel', async (req, res) => {
   const alertId = req.params.id;
 
-  // Clear any active scheduled timers
   if (activeAlertTimers.has(alertId)) {
     clearTimeout(activeAlertTimers.get(alertId));
     activeAlertTimers.delete(alertId);
   }
-  
+
   let alert = (activeAlert && activeAlert.id === alertId) ? activeAlert : null;
   if (!alert) {
     const allHistory = await db.getAllHistory();
@@ -1288,13 +1289,13 @@ app.post('/api/alerts/:id/cancel', async (req, res) => {
 
   if (alert) {
     const durationSeconds = Math.round((Date.now() - alert.timestamp) / 1000);
-    
     alert.durationSeconds = durationSeconds;
     alert.status = 'Cancelled';
 
     await db.updateHistoryEvent(alertId, {
       durationSeconds,
-      status: 'Cancelled'
+      status: 'Cancelled',
+      cancellationTime: Date.now()
     });
 
     broadcastToReceivers(alertId, {
@@ -1303,21 +1304,11 @@ app.post('/api/alerts/:id/cancel', async (req, res) => {
       durationSeconds
     });
 
-    // Send immediate cancellation email to contacts
     try {
       const user = await db.getUser(alert.userId);
       let contacts = await db.getContacts(alert.userId);
-      if (contacts.length === 0) {
-        contacts = [
-          { id: 'police-dispatch', name: 'Emergency Police Dispatch', phone: '911', email: 'dispatch@emergency.gov', preferences: { gps: true, photos: true, video: true, audio: true, message: true } },
-          { id: 'trusted-responders', name: 'Trusted Emergency Responders', phone: '+15550199', email: 'responders@silentsos.org', preferences: { gps: true, photos: true, video: true, audio: true, message: true } }
-        ];
-      }
-      console.log(`✉️ Alert cancelled! Dispatching cancellation email for alert: ${alertId}`);
       sendCancelEmail(user, contacts, alert);
-    } catch (e) {
-      console.error('Failed to dispatch cancellation email:', e);
-    }
+    } catch (e) { }
 
     if (activeAlert && activeAlert.id === alertId) {
       activeAlert = null;
@@ -1334,11 +1325,8 @@ app.delete('/api/alerts/:id', async (req, res) => {
 
   try {
     const history = await db.removeHistoryEvent(userId, alertId);
-    
-    if (activeAlert && activeAlert.id === alertId) {
-      activeAlert = null;
-    }
-    
+    if (activeAlert && activeAlert.id === alertId) activeAlert = null;
+
     broadcastToReceivers(alertId, {
       type: 'status_update',
       status: 'Deleted',
@@ -1351,35 +1339,49 @@ app.delete('/api/alerts/:id', async (req, res) => {
   }
 });
 
+// Notification statuses for a specific alert
+app.get('/api/alerts/:id/notifications', async (req, res) => {
+  const alertId = req.params.id;
+  try {
+    const statuses = await db.getNotificationStatuses(alertId);
+    res.json(statuses);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Clear all user data
+app.post('/api/clear-all', async (req, res) => {
+  await db.clearUserData(req.userId);
+  if (activeAlert && activeAlert.userId === req.userId) activeAlert = null;
+  res.json({ success: true });
+});
+
 // ==========================================
-// 🔒 ADMIN ROUTE REGISTRATION & APIs
+// 🔒 ADMIN APIs
 // ==========================================
 app.use('/api/admin', requireAdmin);
 
-// Admin stats & analytics
 app.get('/api/admin/stats', async (req, res) => {
   try {
     const users = await db.getAllUsers();
-    const history = await db.getAllHistory();
-    
+    const history = await db.getAllHistory(1, 1000);
+
     const activeCount = history.filter(h => h.status === 'Active').length;
-    
-    // Group registrations by day
+
     const registrations = users.reduce((acc, u) => {
-      const ts = parseInt(u.id);
+      const ts = u.createdAt || parseInt(u.id);
       const dateStr = !isNaN(ts) ? new Date(ts).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
       acc[dateStr] = (acc[dateStr] || 0) + 1;
       return acc;
     }, {});
-    
-    // Group alerts by day
+
     const alertsByDate = history.reduce((acc, h) => {
       const dateStr = new Date(h.timestamp).toISOString().split('T')[0];
       acc[dateStr] = (acc[dateStr] || 0) + 1;
       return acc;
     }, {});
 
-    // Group alerts by type
     const alertTypes = history.reduce((acc, h) => {
       const t = h.type || 'General';
       acc[t] = (acc[t] || 0) + 1;
@@ -1398,7 +1400,6 @@ app.get('/api/admin/stats', async (req, res) => {
   }
 });
 
-// Admin Users management routes
 app.get('/api/admin/users', async (req, res) => {
   res.json(await db.getAllUsers());
 });
@@ -1426,11 +1427,7 @@ app.delete('/api/admin/users/:id', async (req, res) => {
     if (targetId === req.userId) {
       return res.status(400).json({ error: 'You cannot delete your own admin account.' });
     }
-    
-    // Clean up active alert if it was owned by this user
-    if (activeAlert && activeAlert.userId === targetId) {
-      activeAlert = null;
-    }
+    if (activeAlert && activeAlert.userId === targetId) activeAlert = null;
 
     await db.deleteUser(targetId);
     res.json({ success: true });
@@ -1439,9 +1436,8 @@ app.delete('/api/admin/users/:id', async (req, res) => {
   }
 });
 
-// Admin Alerts management routes
 app.get('/api/admin/alerts', async (req, res) => {
-  const history = await db.getAllHistory();
+  const history = await db.getAllHistory(1, 200);
   const enriched = await Promise.all(history.map(async (h) => {
     const user = await db.getUser(h.userId);
     return {
@@ -1455,7 +1451,6 @@ app.get('/api/admin/alerts', async (req, res) => {
 
 app.post('/api/admin/alerts/:id/resolve', async (req, res) => {
   const alertId = req.params.id;
-
   if (activeAlertTimers.has(alertId)) {
     clearTimeout(activeAlertTimers.get(alertId));
     activeAlertTimers.delete(alertId);
@@ -1470,11 +1465,12 @@ app.post('/api/admin/alerts/:id/resolve', async (req, res) => {
   if (alert) {
     const durationSeconds = Math.round((Date.now() - alert.timestamp) / 1000);
     alert.durationSeconds = durationSeconds;
-    alert.status = 'Sent'; // resolved status
+    alert.status = 'Sent';
 
     await db.updateHistoryEvent(alertId, {
       durationSeconds,
-      status: 'Sent'
+      status: 'Sent',
+      resolutionTime: Date.now()
     });
 
     broadcastToReceivers(alertId, {
@@ -1483,9 +1479,7 @@ app.post('/api/admin/alerts/:id/resolve', async (req, res) => {
       durationSeconds
     });
 
-    if (activeAlert && activeAlert.id === alertId) {
-      activeAlert = null;
-    }
+    if (activeAlert && activeAlert.id === alertId) activeAlert = null;
     res.json({ success: true });
   } else {
     res.status(404).json({ error: 'Alert not found' });
@@ -1494,7 +1488,7 @@ app.post('/api/admin/alerts/:id/resolve', async (req, res) => {
 
 app.get('/api/admin/alerts/export', async (req, res) => {
   try {
-    const history = await db.getAllHistory();
+    const history = await db.getAllHistory(1, 1000);
     const headers = 'Alert ID,User Name,User Email,Timestamp,Type,Duration (s),Status,Photos Count,Videos Count,Audio Count\n';
     const rows = await Promise.all(history.map(async (h) => {
       const user = await db.getUser(h.userId);
@@ -1512,7 +1506,6 @@ app.get('/api/admin/alerts/export', async (req, res) => {
   }
 });
 
-// Admin global recipient & global settings management
 app.get('/api/admin/settings', async (req, res) => {
   res.json(await db.getSettings('global'));
 });
@@ -1526,13 +1519,16 @@ app.put('/api/admin/settings', async (req, res) => {
   }
 });
 
-app.post('/api/clear-all', async (req, res) => {
-  await db.clearUserData(req.userId);
-  activeAlert = null;
-  res.json({ success: true });
+app.get('/api/admin/audit-logs', async (req, res) => {
+  try {
+    const logs = await db.getAuditLogs(null, 100);
+    res.json(logs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Catch-all route to serve React's index.html in production (for client-side routing)
+// Catch-all route to serve React's index.html in production
 if (fs.existsSync(frontendBuildPath)) {
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/evidence')) {

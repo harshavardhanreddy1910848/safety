@@ -75,27 +75,46 @@ async function getMailTransporter() {
   if (mailTransporter) return mailTransporter;
 
   const smtpHost = process.env.SMTP_HOST || 'smtp.ethereal.email';
-  const smtpPort = parseInt(process.env.SMTP_PORT || '587');
+  const smtpPort = parseInt(process.env.SMTP_PORT || '465');
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
 
   if (smtpUser && smtpPass) {
-    const resolvedHost = await resolveHostToIPv4(smtpHost);
-    console.log(`✉️ Resolved SMTP host ${smtpHost} to IPv4: ${resolvedHost}`);
+    const isGmail = smtpHost.includes('gmail');
+    
+    if (isGmail) {
+      mailTransporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: smtpUser,
+          pass: smtpPass
+        },
+        connectionTimeout: 8000,
+        greetingTimeout: 8000,
+        socketTimeout: 10000
+      });
+      console.log(`✉️ Nodemailer configured using Gmail Service for: ${smtpUser}`);
+    } else {
+      const resolvedHost = await resolveHostToIPv4(smtpHost);
+      console.log(`✉️ Resolved SMTP host ${smtpHost} to IPv4: ${resolvedHost}`);
 
-    mailTransporter = nodemailer.createTransport({
-      host: resolvedHost,
-      port: smtpPort,
-      secure: smtpPort === 465,
-      auth: {
-        user: smtpUser,
-        pass: smtpPass
-      },
-      tls: {
-        servername: smtpHost // Keep original host for SNI / TLS validation when using an IP host
-      }
-    });
-    console.log(`✉️ Nodemailer SMTP configured using user: ${smtpUser}`);
+      mailTransporter = nodemailer.createTransport({
+        host: resolvedHost,
+        port: smtpPort,
+        secure: smtpPort === 465,
+        auth: {
+          user: smtpUser,
+          pass: smtpPass
+        },
+        tls: {
+          servername: smtpHost
+        },
+        connectionTimeout: 8000,
+        greetingTimeout: 8000,
+        socketTimeout: 10000
+      });
+      console.log(`✉️ Nodemailer SMTP configured using user: ${smtpUser}`);
+    }
   } else {
     // Generate Ethereal testing account as fallback
     try {

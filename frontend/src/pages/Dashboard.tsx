@@ -5,9 +5,11 @@ import { useGeolocation } from '../hooks/useGeolocation';
 import {
   ShieldAlert, MapPin, Camera, Mic, Video, EyeOff,
   ExternalLink, CheckCircle2, X, Square, Circle, ChevronDown, ChevronUp, Map as MapIcon, User,
+  MessageSquare, Send,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GoogleMapTracker } from '../components/GoogleMapTracker';
+import { getNativeSmsUri, buildNativeEmergencyText } from '../utils/nativeSms';
 
 // ─── Live Capture Modal ──────────────────────────────────────────────────────
 function CaptureModal({ mode, onClose }: { mode: 'photo' | 'video' | 'audio'; onClose: () => void }) {
@@ -334,6 +336,38 @@ export function Dashboard() {
           </button>
         ))}
       </div>
+
+      {/* Free One-Tap Device Native SMS Broadcast */}
+      {state.contacts.filter(c => c.phone).length > 0 && (
+        <a
+          href={getNativeSmsUri(
+            state.contacts.map(c => c.phone).filter(Boolean),
+            buildNativeEmergencyText({
+              userName: state.userName,
+              alertType: 'Emergency SOS',
+              lat: location.lat,
+              lng: location.lng,
+            })
+          )}
+          className="mb-4 p-3.5 bg-gradient-to-r from-sky-500/15 via-blue-500/10 to-transparent border border-sky-500/30 rounded-2xl flex items-center justify-between group hover:border-sky-500/50 transition-all shadow-lg shadow-sky-500/5"
+        >
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-sky-500 text-black rounded-xl font-bold shadow-md shadow-sky-500/30 group-hover:scale-105 transition-transform">
+              <MessageSquare className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="text-xs font-black text-white flex items-center gap-1.5">
+                Send Free Native SMS SOS
+                <span className="text-[9px] bg-sky-500/20 text-sky-400 border border-sky-500/30 px-1.5 py-0.2 rounded">100% Free</span>
+              </p>
+              <p className="text-[10px] text-textMuted">Open phone's SMS app with GPS & emergency text</p>
+            </div>
+          </div>
+          <span className="px-2.5 py-1 bg-sky-500 hover:bg-sky-400 text-black text-[11px] font-extrabold rounded-lg flex items-center gap-1 shadow transition-all">
+            <Send className="w-3 h-3" /> SMS
+          </span>
+        </a>
+      )}
 
       {/* Status Cards */}
       <div className="space-y-3">

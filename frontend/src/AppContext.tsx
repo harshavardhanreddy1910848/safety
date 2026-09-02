@@ -1,7 +1,6 @@
 import { useEffect, useState, createContext, useContext, ReactNode } from 'react';
 import { AppState, Contact, Settings, AlertEvent } from './types';
 import { initPushNotifications } from './utils/push';
-import { resolveBestLocation } from './utils/geolocation';
 
 
 
@@ -369,34 +368,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return new Promise<void>(async (resolve, reject) => {
       let loc;
 
-      const now = Date.now();
-      const isFreshAndAccurate =
-        currentLocation.lat !== null &&
-        currentLocation.lng !== null &&
-        currentLocation.accuracy <= 100 &&
-        (now - currentLocation.timestamp) < 15000;
-
-      if (isFreshAndAccurate) {
-        console.log('[Geolocation] Using fresh background GPS location:', currentLocation);
+      if (currentLocation.lat !== null && currentLocation.lng !== null) {
         loc = {
-          lat: currentLocation.lat!,
-          lng: currentLocation.lng!,
+          lat: currentLocation.lat,
+          lng: currentLocation.lng,
           accuracy: currentLocation.accuracy,
-          timestamp: currentLocation.timestamp,
+          timestamp: currentLocation.timestamp || Date.now(),
           googleMapsLink: `https://maps.google.com/?q=${currentLocation.lat},${currentLocation.lng}`
         };
       } else {
-        console.log('[Geolocation] Resolving best real-time location...');
         try {
-          loc = await resolveBestLocation(5000);
-        } catch (err: any) {
-          console.warn('[Geolocation] Fallback to available coordinates:', err);
+          const pos = await new Promise<GeolocationPosition>((resolvePos, rejectPos) => {
+            navigator.geolocation.getCurrentPosition(resolvePos, rejectPos, {
+              enableHighAccuracy: true,
+              timeout: 10000,
+              maximumAge: 10000
+            });
+          });
           loc = {
-            lat: currentLocation.lat ?? 13.0827,
-            lng: currentLocation.lng ?? 80.2707,
-            accuracy: currentLocation.accuracy || 1000,
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            timestamp: pos.timestamp || Date.now(),
+            googleMapsLink: `https://maps.google.com/?q=${pos.coords.latitude},${pos.coords.longitude}`
+          };
+        } catch (e) {
+          loc = {
+            lat: 13.0827,
+            lng: 80.2707,
+            accuracy: 100,
             timestamp: Date.now(),
-            googleMapsLink: `https://maps.google.com/?q=${currentLocation.lat ?? 13.0827},${currentLocation.lng ?? 80.2707}`
+            googleMapsLink: `https://maps.google.com/?q=13.0827,80.2707`
           };
         }
       }

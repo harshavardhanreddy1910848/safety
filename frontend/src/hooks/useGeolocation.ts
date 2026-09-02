@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { getCachedLocation, saveCachedLocation, getIpGeolocation } from '../utils/geolocation';
 
 type LocationState = {
   lat: number | null;
@@ -10,86 +9,62 @@ type LocationState = {
 };
 
 export function useGeolocation() {
-  const [location, setLocation] = useState<LocationState>(() => {
-    const cached = getCachedLocation();
-    if (cached) {
-      return {
-        lat: cached.lat,
-        lng: cached.lng,
-        accuracy: cached.accuracy,
-        timestamp: cached.timestamp,
-        error: null,
-      };
-    }
-    return {
-      lat: null,
-      lng: null,
-      accuracy: 0,
-      timestamp: Date.now(),
-      error: null,
-    };
+  const [location, setLocation] = useState<LocationState>({
+    lat: null,
+    lng: null,
+    accuracy: 0,
+    timestamp: Date.now(),
+    error: null,
   });
 
   useEffect(() => {
     let watchId: number | null = null;
     let isMounted = true;
 
+    if (!navigator.geolocation) {
+      setLocation((prev) => ({
+        ...prev,
+        error: 'Geolocation is not supported by your browser.',
+      }));
+      return;
+    }
+
     const handleSuccess = (pos: GeolocationPosition) => {
       if (!isMounted) return;
-      const coords = {
+      setLocation({
         lat: pos.coords.latitude,
         lng: pos.coords.longitude,
         accuracy: pos.coords.accuracy,
         timestamp: pos.timestamp || Date.now(),
-        googleMapsLink: `https://maps.google.com/?q=${pos.coords.latitude},${pos.coords.longitude}`,
-      };
-      saveCachedLocation(coords);
-      setLocation({
-        ...coords,
         error: null,
       });
     };
 
-    const handleFallback = async () => {
-      const ipLoc = await getIpGeolocation();
+    const handleError = (err: GeolocationPositionError) => {
       if (!isMounted) return;
-      if (ipLoc) {
-        setLocation({
-          lat: ipLoc.lat,
-          lng: ipLoc.lng,
-          accuracy: ipLoc.accuracy,
-          timestamp: ipLoc.timestamp,
-          error: null,
-        });
+      let msg = err.message;
+      if (err.code === err.PERMISSION_DENIED) {
+        msg = 'Location permission denied. Please allow location access in your browser.';
+      } else if (err.code === err.POSITION_UNAVAILABLE) {
+        msg = 'GPS location unavailable.';
+      } else if (err.code === err.TIMEOUT) {
+        msg = 'GPS location request timed out.';
       }
+      setLocation((prev) => ({
+        ...prev,
+        error: msg,
+      }));
     };
 
-    const startWatching = () => {
-      if (!navigator.geolocation) {
-        handleFallback();
-        return;
-      }
-
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => handleSuccess(pos),
-        (err) => {
-          console.warn('[Geolocation] watchPosition notice:', err.message);
-          // If GPS times out or is unavailable on desktop, resolve IP fallback seamlessly
-          handleFallback();
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 60000,
-        }
-      );
-    };
-
-    startWatching();
+    watchId = navigator.geolocation.watchPosition(handleSuccess, handleError, {
+      enableHighAccuracy: true,
+      timeout: 20000,
+      maximumAge: 10000,
+    });
 
     return () => {
       isMounted = false;
-      if (watchId !== null && navigator.geolocation) {
+      if (watchId !== null) {
         navigator.geolocation.clearWatch(watchId);
       }
     };

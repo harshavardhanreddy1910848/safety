@@ -3,6 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
+import { neon } from '@neondatabase/serverless';
 import dotenv from 'dotenv';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -10,26 +11,38 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
-// Initialize PostgreSQL Connection Pool
-const connectionConfig = process.env.DATABASE_URL
-  ? {
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.DATABASE_URL.includes('sslmode=') ? undefined : { rejectUnauthorized: false }
+// Database query adapter supporting Neon Serverless HTTPS (port 443) & PostgreSQL
+const databaseUrl = process.env.DATABASE_URL || '';
+const isNeon = databaseUrl.includes('neon.tech');
+
+let pool;
+
+if (isNeon) {
+  const neonSql = neon(databaseUrl, { fullResults: true });
+  pool = {
+    query: async (text, params = []) => {
+      return await neonSql.query(text, params);
     }
-  : {
-      host: process.env.PGHOST || 'localhost',
-      port: parseInt(process.env.PGPORT || '5432'),
-      user: process.env.PGUSER || 'postgres',
-      password: process.env.PGPASSWORD || 'postgres',
-      database: process.env.PGDATABASE || 'silentsos',
-      ssl: { rejectUnauthorized: false }
-    };
-
-const pool = new pg.Pool(connectionConfig);
-
-pool.on('error', (err) => {
-  console.error('Unexpected error on idle PostgreSQL client:', err);
-});
+  };
+} else if (databaseUrl) {
+  const pgPool = new pg.Pool({
+    connectionString: databaseUrl,
+    ssl: databaseUrl.includes('sslmode=') ? undefined : { rejectUnauthorized: false }
+  });
+  pgPool.on('error', (err) => console.error('Unexpected error on idle PostgreSQL client:', err));
+  pool = pgPool;
+} else {
+  const pgPool = new pg.Pool({
+    host: process.env.PGHOST || 'localhost',
+    port: parseInt(process.env.PGPORT || '5432'),
+    user: process.env.PGUSER || 'postgres',
+    password: process.env.PGPASSWORD || 'postgres',
+    database: process.env.PGDATABASE || 'silentsos',
+    ssl: { rejectUnauthorized: false }
+  });
+  pgPool.on('error', (err) => console.error('Unexpected error on idle PostgreSQL client:', err));
+  pool = pgPool;
+}
 
 // Helper to convert camelCase to snake_case for dynamic update properties
 function camelToSnake(str) {
@@ -150,7 +163,7 @@ function mapContactRow(row) {
     } else {
       try {
         preferences = JSON.parse(row.preferences);
-      } catch (e) {}
+      } catch (e) { }
     }
   }
   return {
@@ -171,7 +184,7 @@ function mapHistoryRow(row) {
     } else {
       try {
         evidence = JSON.parse(row.evidence);
-      } catch (e) {}
+      } catch (e) { }
     }
   }
   let contactsNotified = [];
@@ -181,14 +194,14 @@ function mapHistoryRow(row) {
     } else {
       try {
         contactsNotified = JSON.parse(row.contacts_notified);
-      } catch (e) {}
+      } catch (e) { }
     }
   }
   let gpsPath = [];
   if (row.gps_path_enc) {
     try {
       gpsPath = JSON.parse(decrypt(row.gps_path_enc));
-    } catch (e) {}
+    } catch (e) { }
   }
   return {
     id: row.id,
@@ -261,6 +274,14 @@ export async function initDb() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_resets (
+      email VARCHAR(255) PRIMARY KEY,
+      code VARCHAR(10) NOT NULL,
+      expires_at BIGINT NOT NULL
+    )
+  `);
+
   await seedAdmin();
 }
 
@@ -312,7 +333,7 @@ export const db = {
     }
     const userId = Date.now().toString();
     const hash = hashPassword(password);
-    
+
     await run(
       `INSERT INTO users (id, email, password_hash, name, role, disabled, is_setup_complete) VALUES (?, ?, ?, ?, 'user', false, false)`,
       [userId, email.toLowerCase(), hash, name || '']
@@ -348,6 +369,48 @@ export const db = {
       throw new Error('Invalid email or password');
     }
     return mapUserRow(row);
+  },
+
+  async getUserByEmail(email) {
+    const row = await get(`SELECT * FROM users WHERE LOWER(email) = ?`, [email.toLowerCase()]);
+    return mapUserRow(row);
+  },
+
+  async createPasswordReset(email, code, expiresAt) {
+    const lowerEmail = email.toLowerCase();
+    await run(
+      `INSERT INTO password_resets (email, code, expires_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT (email) DO UPDATE SET code = EXCLUDED.code, expires_at = EXCLUDED.expires_at`,
+      [lowerEmail, code, expiresAt]
+    );
+    return true;
+  },
+
+  async verifyAndResetPassword(email, code, newPassword) {
+    const lowerEmail = email.toLowerCase();
+    const user = await get(`SELECT id FROM users WHERE LOWER(email) = ?`, [lowerEmail]);
+    if (!user) {
+      throw new Error('User with this email does not exist');
+    }
+
+    const resetRecord = await get(`SELECT * FROM password_resets WHERE LOWER(email) = ?`, [lowerEmail]);
+    if (!resetRecord) {
+      throw new Error('No password reset requested or verification code expired');
+    }
+
+    if (String(resetRecord.code).trim() !== String(code).trim()) {
+      throw new Error('Invalid verification code. Please check your Gmail.');
+    }
+
+    if (Number(resetRecord.expires_at) < Date.now()) {
+      await run(`DELETE FROM password_resets WHERE LOWER(email) = ?`, [lowerEmail]);
+      throw new Error('Verification code has expired. Please request a new one.');
+    }
+
+    await run(`UPDATE users SET password_hash = ? WHERE LOWER(email) = ?`, [hashPassword(newPassword), lowerEmail]);
+    await run(`DELETE FROM password_resets WHERE LOWER(email) = ?`, [lowerEmail]);
+    return this.getUser(user.id);
   },
 
   async resetPassword(email, newPassword) {
@@ -403,7 +466,7 @@ export const db = {
     const name = updates.name !== undefined ? updates.name : row.name;
     const phoneEnc = updates.phone ? encrypt(updates.phone) : row.phone_enc;
     const emailEnc = updates.email ? encrypt(updates.email) : row.email_enc;
-    
+
     let preferences = row.preferences;
     if (updates.preferences) {
       preferences = JSON.stringify(updates.preferences);
@@ -489,14 +552,14 @@ export const db = {
       `INSERT INTO history (id, user_id, timestamp, type, duration_seconds, status, evidence, contacts_notified, gps_path_enc) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        event.id, 
-        userId, 
-        event.timestamp ? BigInt(event.timestamp) : null, 
-        event.type || 'General', 
-        event.durationSeconds || 0, 
-        event.status, 
-        evidenceStr, 
-        notifyStr, 
+        event.id,
+        userId,
+        event.timestamp ? BigInt(event.timestamp) : null,
+        event.type || 'General',
+        event.durationSeconds || 0,
+        event.status,
+        evidenceStr,
+        notifyStr,
         gpsPathEnc
       ]
     );
@@ -525,7 +588,7 @@ export const db = {
             }
           });
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     await run(`DELETE FROM history WHERE id = ? AND user_id = ?`, [alertId, userId]);
@@ -538,7 +601,7 @@ export const db = {
 
     const durationSeconds = updates.durationSeconds !== undefined ? updates.durationSeconds : row.duration_seconds;
     const status = updates.status || row.status;
-    
+
     let evidence = row.evidence;
     if (updates.evidence) {
       evidence = JSON.stringify(updates.evidence);
@@ -563,7 +626,7 @@ export const db = {
 
   async clearUserData(userId) {
     await run(`DELETE FROM contacts WHERE user_id = ?`, [userId]);
-    
+
     // Clean files from history before deleting rows
     const rows = await all(`SELECT evidence FROM history WHERE user_id = ?`, [userId]);
     for (const row of rows) {
@@ -580,14 +643,14 @@ export const db = {
               if (fs.existsSync(fullPath)) {
                 try {
                   fs.unlinkSync(fullPath);
-                } catch (e) {}
+                } catch (e) { }
               }
             });
           }
-        } catch (e) {}
+        } catch (e) { }
       }
     }
-    
+
     await run(`DELETE FROM history WHERE user_id = ?`, [userId]);
     await run(`DELETE FROM settings WHERE user_id = ?`, [userId]);
     await run(`UPDATE users SET is_setup_complete = false WHERE id = ?`, [userId]);
@@ -633,7 +696,7 @@ export const db = {
     await run(`DELETE FROM settings WHERE user_id = ?`, [userId]);
     // 3. Delete contacts
     await run(`DELETE FROM contacts WHERE user_id = ?`, [userId]);
-    
+
     // 4. Delete evidence files and history
     const rows = await all(`SELECT evidence FROM history WHERE user_id = ?`, [userId]);
     for (const row of rows) {
@@ -650,11 +713,11 @@ export const db = {
               if (fs.existsSync(fullPath)) {
                 try {
                   fs.unlinkSync(fullPath);
-                } catch (e) {}
+                } catch (e) { }
               }
             });
           }
-        } catch (e) {}
+        } catch (e) { }
       }
     }
     await run(`DELETE FROM history WHERE user_id = ?`, [userId]);

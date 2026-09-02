@@ -9,13 +9,16 @@ import {
   Download,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
+  Map as MapIcon,
   Lock,
   X,
   ZoomIn,
-  Trash2
+  Trash2,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
+import { GoogleMapTracker } from '../components/GoogleMapTracker';
 
 // ── Lightbox for full-screen photo view ──────────────────────
 function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
@@ -52,6 +55,7 @@ function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: ()
 export function Evidence() {
   const { state, refreshHistory, deleteAlert } = useApp();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [openMapId, setOpenMapId] = useState<string | null>(null);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [imgErrors, setImgErrors] = useState<Record<string, boolean>>({});
   
@@ -366,20 +370,48 @@ export function Evidence() {
 
                         {/* ── GPS ── */}
                         {hasGPS && (
-                          <div className="flex items-center justify-between bg-surfaceHighlight rounded-xl p-3 border border-white/5">
-                            <div className="flex items-center gap-2">
-                              <MapPin className="w-4 h-4 text-emergency" />
-                              <div>
-                                <p className="text-xs font-bold text-white">GPS Route Log</p>
-                                <p className="text-[10px] text-textMuted">{event.gpsPath.length} coordinate points</p>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between bg-surfaceHighlight rounded-xl p-3 border border-white/5">
+                              <div className="flex items-center gap-2">
+                                <MapPin className="w-4 h-4 text-emergency" />
+                                <div>
+                                  <p className="text-xs font-bold text-white">GPS Route Log</p>
+                                  <p className="text-[10px] text-textMuted">{event.gpsPath.length} coordinate points</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => setOpenMapId(openMapId === event.id ? null : event.id)}
+                                  className={`flex items-center gap-1 text-[10px] font-bold px-2.5 py-1.5 rounded-lg border transition-all ${
+                                    openMapId === event.id
+                                      ? 'bg-emergency text-white border-emergency'
+                                      : 'bg-emergency/10 hover:bg-emergency/20 text-red-300 border-emergency/30'
+                                  }`}
+                                >
+                                  <MapIcon className="w-3 h-3" />
+                                  <span>{openMapId === event.id ? 'Hide Map' : 'View Google Map'}</span>
+                                  {openMapId === event.id ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                </button>
+                                <button
+                                  onClick={() => handleDownloadGPS(event)}
+                                  className="flex items-center gap-1 text-[10px] font-bold text-safe bg-safe/10 border border-safe/20 px-2.5 py-1.5 rounded-lg hover:bg-safe/20 transition-all"
+                                >
+                                  <Download className="w-3 h-3" /> GPS JSON
+                                </button>
                               </div>
                             </div>
-                            <button
-                              onClick={() => handleDownloadGPS(event)}
-                              className="flex items-center gap-1 text-[10px] font-bold text-safe bg-safe/10 border border-safe/20 px-2.5 py-1.5 rounded-lg hover:bg-safe/20 transition-all"
-                            >
-                              <Download className="w-3 h-3" /> GPS JSON
-                            </button>
+
+                            {openMapId === event.id && (
+                              <div className="pt-2">
+                                <GoogleMapTracker
+                                  currentCoords={event.gpsPath[event.gpsPath.length - 1]}
+                                  gpsPath={event.gpsPath}
+                                  isDistress={true}
+                                  height="260px"
+                                  title={`Incident Google Map Route (${event.gpsPath.length} points)`}
+                                />
+                              </div>
+                            )}
                           </div>
                         )}
 

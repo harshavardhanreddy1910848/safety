@@ -696,10 +696,111 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.post('/api/auth/reset-password', async (req, res) => {
-  const { email, password } = req.body;
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email || !email.trim()) {
+    return res.status(400).json({ error: 'Please provide a valid email address.' });
+  }
+
   try {
-    await db.resetPassword(email, password);
+    const user = await db.getUserByEmail(email.trim());
+    if (!user) {
+      return res.status(404).json({ error: 'No account found with this email address.' });
+    }
+
+    // Generate 6-digit verification code OTP
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    await db.createPasswordReset(email.trim(), code, expiresAt);
+
+    // Send Gmail notification with verification code
+    const emailHtml = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 540px; margin: 0 auto; background-color: #0d0d12; color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1);">
+        <div style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); padding: 32px 24px; text-align: center;">
+          <h1 style="margin: 0; font-size: 26px; font-weight: 800; color: #ffffff; letter-spacing: 1px;">SilentSOS</h1>
+          <p style="margin: 6px 0 0 0; font-size: 13px; color: rgba(255, 255, 255, 0.85); text-transform: uppercase; letter-spacing: 2px; font-weight: 600;">Password Reset Verification</p>
+        </div>
+        <div style="padding: 32px 24px; background-color: #12121a;">
+          <p style="font-size: 15px; line-height: 1.6; color: rgba(255, 255, 255, 0.85); margin-top: 0;">
+            Hello <strong>${user.name || 'User'}</strong>,
+          </p>
+          <p style="font-size: 14px; line-height: 1.6; color: rgba(255, 255, 255, 0.7);">
+            We received a request to reset your SilentSOS account password. Use the 6-digit verification code below to complete your password reset:
+          </p>
+          <div style="margin: 28px 0; text-align: center;">
+            <div style="display: inline-block; background: rgba(220, 38, 38, 0.12); border: 2px dashed #ef4444; border-radius: 12px; padding: 16px 36px;">
+              <span style="font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #f87171; font-family: monospace;">${code}</span>
+            </div>
+            <p style="font-size: 12px; color: rgba(255, 255, 255, 0.45); margin-top: 10px;">
+              ⏱️ This code will expire in <strong>10 minutes</strong>.
+            </p>
+          </div>
+          <div style="background: rgba(255, 255, 255, 0.03); border-left: 3px solid #ef4444; padding: 12px 16px; border-radius: 6px; margin-top: 24px;">
+            <p style="margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.6); line-height: 1.5;">
+              <strong>Security Notice:</strong> If you did not request this password reset, please ignore this email or make sure your account is secure.
+            </p>
+          </div>
+        </div>
+        <div style="padding: 16px 24px; background-color: #0a0a0f; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.05);">
+          <p style="margin: 0; font-size: 11px; color: rgba(255, 255, 255, 0.3);">
+            SilentSOS — Discreet Personal Safety Assistant
+          </p>
+        </div>
+      </div>
+    `;
+
+    await dispatchEmail({
+      to: email.trim(),
+      subject: `🔒 SilentSOS Password Reset Code: ${code}`,
+      html: emailHtml
+    });
+
+    res.json({ success: true, message: `Verification code sent to ${email.trim()}` });
+  } catch (err) {
+    console.error('❌ Forgot password error:', err);
+    res.status(400).json({ error: err.message || 'Failed to send verification email' });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { email, code, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and new password are required.' });
+  }
+
+  try {
+    if (code) {
+      await db.verifyAndResetPassword(email, code, password);
+    } else {
+      await db.resetPassword(email, password);
+    }
+
+    // Non-blocking notification email
+    try {
+      const confirmHtml = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 540px; margin: 0 auto; background-color: #0d0d12; color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1);">
+          <div style="background: linear-gradient(135deg, #10b981 0%, #047857 100%); padding: 24px; text-align: center;">
+            <h1 style="margin: 0; font-size: 24px; font-weight: 800; color: #ffffff;">SilentSOS</h1>
+            <p style="margin: 4px 0 0 0; font-size: 12px; color: rgba(255, 255, 255, 0.9); text-transform: uppercase; letter-spacing: 2px;">Security Alert</p>
+          </div>
+          <div style="padding: 28px 24px; background-color: #12121a;">
+            <p style="font-size: 15px; color: rgba(255, 255, 255, 0.9); margin-top: 0;">
+              Your SilentSOS password was successfully reset.
+            </p>
+            <p style="font-size: 13px; color: rgba(255, 255, 255, 0.6); line-height: 1.6;">
+              If you did not perform this action, please log in immediately and update your password.
+            </p>
+          </div>
+        </div>
+      `;
+      dispatchEmail({
+        to: email.trim(),
+        subject: '✅ SilentSOS Password Reset Successful',
+        html: confirmHtml
+      }).catch(e => console.warn('Non-blocking confirmation email failed:', e.message));
+    } catch (e) { }
+
     res.json({ success: true, message: 'Password reset successful' });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1365,6 +1466,6 @@ initDb().then(() => {
     console.log(`SilentSOS backend server listening at http://localhost:${PORT}`);
   });
 }).catch(err => {
-  console.error('❌ Failed to initialize SQLite3 database:', err);
+  console.error('❌ Failed to initialize PostgreSQL database:', err);
   process.exit(1);
 });

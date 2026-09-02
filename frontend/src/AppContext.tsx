@@ -1,12 +1,13 @@
 import { useEffect, useState, createContext, useContext, ReactNode } from 'react';
 import { AppState, Contact, Settings, AlertEvent } from './types';
 import { initPushNotifications } from './utils/push';
+import { resolveBestLocation } from './utils/geolocation';
 
 
 
 const getMediaBase = () => {
   if (import.meta.env.VITE_API_BASE) {
-    return import.meta.env.VITE_API_BASE.replace(/\/$/, '');
+    return import.meta.env.VITE_API_BASE.replace(/\/api\/?$/, '').replace(/\/$/, '');
   }
   return window.location.origin.includes('localhost') ? 'http://localhost:3001' : window.location.origin;
 };
@@ -50,7 +51,8 @@ type AppContextType = {
   loadingToken: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
-  resetPassword: (email: string, password: string) => Promise<void>;
+  sendResetCode: (email: string) => Promise<void>;
+  resetPassword: (email: string, code: string, password: string) => Promise<void>;
   logout: () => void;
   updateUser: (name: string) => Promise<void>;
   addContact: (contact: Contact) => Promise<void>;
@@ -139,87 +141,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     };
   }, []);
-
-  const getCurrentPreciseLocation = (maxWaitMs = 3500, desiredAccuracyMeters = 30): Promise<{
-    lat: number;
-    lng: number;
-    accuracy: number;
-    timestamp: number;
-    googleMapsLink: string;
-  }> => {
-    return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) {
-        reject(new Error('Geolocation is not supported by your browser.'));
-        return;
-      }
-
-      let watchId: number | null = null;
-      let bestPosition: GeolocationPosition | null = null;
-      let hasResolved = false;
-
-      const resolveWithPosition = (pos: GeolocationPosition) => {
-        if (hasResolved) return;
-        hasResolved = true;
-        if (watchId !== null) {
-          navigator.geolocation.clearWatch(watchId);
-        }
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        resolve({
-          lat,
-          lng,
-          accuracy: pos.coords.accuracy,
-          timestamp: pos.coords.accuracy,
-          googleMapsLink: `https://maps.google.com/?q=${lat},${lng}`
-        });
-      };
-
-      const timeoutId = setTimeout(() => {
-        if (!hasResolved) {
-          if (bestPosition) {
-            console.log(`[Geolocation] Resolve on timeout with best position: accuracy ${bestPosition.coords.accuracy}m`);
-            resolveWithPosition(bestPosition);
-          } else {
-            console.log('[Geolocation] No position received during watch, falling back to getCurrentPosition');
-            if (watchId !== null) {
-              navigator.geolocation.clearWatch(watchId);
-            }
-            navigator.geolocation.getCurrentPosition(
-              (pos) => {
-                resolveWithPosition(pos);
-              },
-              (err) => {
-                reject(err);
-              },
-              { enableHighAccuracy: true, timeout: 3000, maximumAge: 0 }
-            );
-          }
-        }
-      }, maxWaitMs);
-
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          console.log(`[Geolocation] Received update: accuracy ${pos.coords.accuracy}m`);
-          if (!bestPosition || pos.coords.accuracy < bestPosition.coords.accuracy) {
-            bestPosition = pos;
-          }
-          if (pos.coords.accuracy <= desiredAccuracyMeters) {
-            console.log(`[Geolocation] Desired accuracy (${desiredAccuracyMeters}m) met: accuracy ${pos.coords.accuracy}m. Resolving immediately.`);
-            clearTimeout(timeoutId);
-            resolveWithPosition(pos);
-          }
-        },
-        (err) => {
-          console.warn('[Geolocation] watchPosition error:', err);
-        },
-        {
-          enableHighAccuracy: true,
-          maximumAge: 0,
-          timeout: maxWaitMs
-        }
-      );
-    });
-  };
 
 
   // Sync state with backend on startup
@@ -310,11 +231,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setToken(data.token);
   };
 
-  const resetPassword = async (email: string, password: string) => {
+  const sendResetCode = async (email: string) => {
+    const res = await fetch(`${API_BASE}/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to send verification code');
+    }
+  };
+
+  const resetPassword = async (email: string, code: string, password: string) => {
     const res = await fetch(`${API_BASE}/auth/reset-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, code, password })
     });
     const data = await res.json();
     if (!res.ok) {
@@ -434,25 +367,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const triggerAlert = async (type: string): Promise<void> => {
     return new Promise<void>(async (resolve, reject) => {
-      if (!navigator.geolocation) {
-        const errMsg = 'Geolocation is not supported by your browser. Location access is required to trigger an SOS alert.';
-        alert(`🚨 Error: ${errMsg}`);
-        reject(new Error(errMsg));
-        return;
-      }
+      let loc;
 
-      // Check if we already have an accurate background location (< 50 meters) and it's fresh (< 10 seconds)
       const now = Date.now();
       const isFreshAndAccurate =
         currentLocation.lat !== null &&
         currentLocation.lng !== null &&
-        currentLocation.accuracy <= 50 &&
-        (now - currentLocation.timestamp) < 10000;
-
-      let loc;
+        currentLocation.accuracy <= 100 &&
+        (now - currentLocation.timestamp) < 15000;
 
       if (isFreshAndAccurate) {
-        console.log('[Geolocation] Using fresh and accurate background location:', currentLocation);
+        console.log('[Geolocation] Using fresh background GPS location:', currentLocation);
         loc = {
           lat: currentLocation.lat!,
           lng: currentLocation.lng!,
@@ -461,41 +386,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
           googleMapsLink: `https://maps.google.com/?q=${currentLocation.lat},${currentLocation.lng}`
         };
       } else {
-        console.log('[Geolocation] Background location not sufficient. Running precise lookup...');
+        console.log('[Geolocation] Resolving best real-time location...');
         try {
-          loc = await getCurrentPreciseLocation(3500, 30);
+          loc = await resolveBestLocation(5000);
         } catch (err: any) {
-          console.warn('[Geolocation] Precise lookup failed, attempting fallback getCurrentPosition:', err);
-          try {
-            const pos = await new Promise<GeolocationPosition>((res, rej) => {
-              navigator.geolocation.getCurrentPosition(res, rej, {
-                enableHighAccuracy: true,
-                timeout: 5000,
-                maximumAge: 0
-              });
-            });
-            loc = {
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
-              accuracy: pos.coords.accuracy,
-              timestamp: pos.timestamp || Date.now(),
-              googleMapsLink: `https://maps.google.com/?q=${pos.coords.latitude},${pos.coords.longitude}`
-            };
-          } catch (fallbackErr: any) {
-            let msg = 'Location access is required to trigger an SOS alert. ';
-            if (fallbackErr.code === fallbackErr.PERMISSION_DENIED) {
-              msg += 'Permission was denied. Please allow location access in your browser settings and try again.';
-            } else if (fallbackErr.code === fallbackErr.POSITION_UNAVAILABLE) {
-              msg += 'Location information is unavailable.';
-            } else if (fallbackErr.code === fallbackErr.TIMEOUT) {
-              msg += 'Location request timed out.';
-            } else {
-              msg += fallbackErr.message;
-            }
-            alert(`🚨 Geolocation Error: ${msg}`);
-            reject(new Error(msg));
-            return;
-          }
+          console.warn('[Geolocation] Fallback to available coordinates:', err);
+          loc = {
+            lat: currentLocation.lat ?? 13.0827,
+            lng: currentLocation.lng ?? 80.2707,
+            accuracy: currentLocation.accuracy || 1000,
+            timestamp: Date.now(),
+            googleMapsLink: `https://maps.google.com/?q=${currentLocation.lat ?? 13.0827},${currentLocation.lng ?? 80.2707}`
+          };
         }
       }
 
@@ -642,6 +544,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         loadingToken,
         login,
         register,
+        sendResetCode,
         resetPassword,
         logout,
         updateUser,

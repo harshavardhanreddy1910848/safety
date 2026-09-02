@@ -4,9 +4,10 @@ import { useApp, API_BASE } from '../AppContext';
 import { useGeolocation } from '../hooks/useGeolocation';
 import {
   ShieldAlert, MapPin, Camera, Mic, Video, EyeOff,
-  ExternalLink, CheckCircle2, X, Square, Circle,
+  ExternalLink, CheckCircle2, X, Square, Circle, ChevronDown, ChevronUp, Map as MapIcon,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { GoogleMapTracker } from '../components/GoogleMapTracker';
 
 // ─── Live Capture Modal ──────────────────────────────────────────────────────
 function CaptureModal({ mode, onClose }: { mode: 'photo' | 'video' | 'audio'; onClose: () => void }) {
@@ -254,6 +255,7 @@ export function Dashboard() {
   const location = useGeolocation();
 
   const [captureMode, setCaptureMode] = useState<'photo' | 'video' | 'audio' | null>(null);
+  const [showMap, setShowMap] = useState(false);
 
   const handleSOS = async (type: string = 'General') => {
     try {
@@ -326,30 +328,63 @@ export function Dashboard() {
       <div className="space-y-3">
 
         {/* GPS */}
-        <div className="bg-surface rounded-xl p-4 border border-surfaceHighlight flex items-center justify-between">
-          <div className="flex items-center">
-            <div className="relative mr-4">
-              <MapPin className="w-5 h-5 text-safe" />
-              <span className="absolute top-0 right-0 w-2 h-2 bg-safe rounded-full animate-ping-slow" />
+        <div className="bg-surface rounded-xl p-4 border border-surfaceHighlight">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <div className="relative mr-4">
+                <MapPin className="w-5 h-5 text-safe" />
+                <span className="absolute top-0 right-0 w-2 h-2 bg-safe rounded-full animate-ping-slow" />
+              </div>
+              <div>
+                <p className="text-sm font-bold">Live GPS Active</p>
+                <p className="text-xs text-textMuted font-mono">
+                  {location.lat !== null && location.lng !== null
+                    ? `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`
+                    : location.error || 'Acquiring GPS signal...'}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-bold">Live GPS Active</p>
-              <p className="text-xs text-textMuted font-mono">
-                {location.lat !== null && location.lng !== null
-                  ? `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`
-                  : location.error || 'Acquiring GPS signal...'}
-              </p>
+            <div className="flex items-center gap-2">
+              {location.lat !== null && location.lng !== null && (
+                <>
+                  <button
+                    onClick={() => setShowMap(!showMap)}
+                    className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center gap-1.5 ${
+                      showMap
+                        ? 'bg-safe text-black border-safe'
+                        : 'bg-safe/10 hover:bg-safe/20 text-safe border-safe/30'
+                    }`}
+                  >
+                    <MapIcon className="w-3.5 h-3.5" />
+                    <span>{showMap ? 'Hide Map' : 'View Map'}</span>
+                    {showMap ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                  <a href={`https://maps.google.com/?q=${location.lat},${location.lng}`}
+                    target="_blank" rel="noopener noreferrer"
+                    className="p-1.5 bg-safe/10 hover:bg-safe/20 border border-safe/20 rounded-lg transition-all"
+                    title="Open in Google Maps">
+                    <ExternalLink className="w-3.5 h-3.5 text-safe" />
+                  </a>
+                </>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {location.lat !== null && location.lng !== null && (
-              <a href={`https://maps.google.com/?q=${location.lat},${location.lng}`}
-                target="_blank" rel="noopener noreferrer"
-                className="p-1.5 bg-safe/10 hover:bg-safe/20 border border-safe/20 rounded-lg transition-all">
-                <ExternalLink className="w-3.5 h-3.5 text-safe" />
-              </a>
-            )}
-          </div>
+
+          {/* Expandable Google Map view */}
+          {showMap && location.lat !== null && location.lng !== null && (
+            <div className="mt-4 pt-4 border-t border-white/10">
+              <GoogleMapTracker
+                currentCoords={{
+                  lat: location.lat,
+                  lng: location.lng,
+                  accuracy: location.accuracy || undefined,
+                }}
+                isDistress={false}
+                height="240px"
+                title="Google Maps Live GPS"
+              />
+            </div>
+          )}
         </div>
 
         {/* AUTO-CAPTURE — Tap to open live camera/mic */}

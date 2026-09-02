@@ -1,14 +1,10 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
 import {
   ShieldAlert,
-  MapPin,
   Camera,
   Mic,
   Clock,
-  ExternalLink,
   MessageSquare,
   Mail,
   Smartphone,
@@ -16,19 +12,13 @@ import {
   Lock
 } from 'lucide-react';
 import { MEDIA_BASE as API_BASE, WS_BASE } from '../AppContext';
-
-
+import { GoogleMapTracker } from '../components/GoogleMapTracker';
 
 export function Receiver() {
   const { alertId } = useParams<{ alertId: string }>();
   const [alertData, setAlertData] = useState<any>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const wsRef = useRef<WebSocket | null>(null);
-
-  // Map references
-  const mapRef = useRef<any>(null);
-  const markerRef = useRef<any>(null);
-  const polylineRef = useRef<any>(null);
 
   // Fetch initial details
   useEffect(() => {
@@ -107,60 +97,6 @@ export function Receiver() {
 
   const currentCoords = alertData?.gpsPath?.[alertData.gpsPath.length - 1];
 
-  // Initialize and update Leaflet Map
-  useEffect(() => {
-    if (!alertData || !currentCoords || !L) return;
-
-    // 1. Initialize Leaflet Map object
-    if (!mapRef.current) {
-      try {
-        mapRef.current = L.map('map-receiver-leaflet', {
-          zoomControl: true,
-          attributionControl: false
-        }).setView([currentCoords.lat, currentCoords.lng], 16);
-
-        // OSM Tile Layer
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapRef.current);
-
-        // Customize marker icon
-        const redIcon = L.icon({
-          iconUrl: '/marker-icon-red.png',
-          shadowUrl: '/marker-shadow.png',
-          iconSize: [25, 41],
-          iconAnchor: [12, 41],
-          popupAnchor: [1, -34],
-          shadowSize: [41, 41]
-        });
-
-        // Setup active pin
-        markerRef.current = L.marker([currentCoords.lat, currentCoords.lng], { icon: redIcon })
-          .addTo(mapRef.current)
-          .bindPopup('<b>Distress Location</b><br/>Live updates active.')
-          .openPopup();
-
-        // Setup paths
-        const latlngs = alertData.gpsPath.map((pt: any) => [pt.lat, pt.lng]);
-        polylineRef.current = L.polyline(latlngs, {
-          color: '#ef4444',
-          weight: 5,
-          opacity: 0.85
-        }).addTo(mapRef.current);
-      } catch (e) {
-        console.error('Failed to initialize map:', e);
-      }
-    } else {
-      // 2. Update existing Leaflet Map pin & polyline path
-      if (markerRef.current) {
-        markerRef.current.setLatLng([currentCoords.lat, currentCoords.lng]);
-      }
-      if (polylineRef.current) {
-        const latlngs = alertData.gpsPath.map((pt: any) => [pt.lat, pt.lng]);
-        polylineRef.current.setLatLngs(latlngs);
-      }
-      mapRef.current.panTo([currentCoords.lat, currentCoords.lng]);
-    }
-  }, [alertData, currentCoords]);
-
   if (!alertData) {
     return (
       <div className="flex flex-col items-center justify-center h-full bg-background text-textMuted p-6">
@@ -212,48 +148,14 @@ export function Receiver() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Map & Active Broadcast Duration */}
         <div className="lg:col-span-7 space-y-4">
-          {/* Interactive Map */}
-          <div className="bg-surface border border-surfaceHighlight rounded-2xl p-4">
-            <h3 className="text-xs font-bold text-textMuted uppercase mb-3 flex items-center gap-1.5">
-              <MapPin className="w-4 h-4 text-safe" /> Live Location Tracking Map
-            </h3>
-
-            {/* Map Placeholder Element for Leaflet */}
-            <div
-              id="map-receiver-leaflet"
-              style={{ height: '350px' }}
-              className="rounded-xl border border-surfaceHighlight overflow-hidden mb-3 relative z-10 w-full"
-            />
-
-            {currentCoords ? (
-              <div className="space-y-3">
-                <div className="flex justify-between items-center bg-background p-2.5 rounded-xl border border-surfaceHighlight text-xs">
-                  <div>
-                    <p className="text-[9px] text-textMuted uppercase">Latitude</p>
-                    <p className="font-mono font-bold text-white">{currentCoords.lat.toFixed(6)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[9px] text-textMuted uppercase">Longitude</p>
-                    <p className="font-mono font-bold text-white">{currentCoords.lng.toFixed(6)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[9px] text-textMuted uppercase">Updates</p>
-                    <p className="font-mono font-bold text-white">{alertData.gpsPath?.length}</p>
-                  </div>
-                </div>
-                <a
-                  href={`https://maps.google.com/?q=${currentCoords.lat},${currentCoords.lng}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full bg-safe hover:bg-emerald-400 text-black font-bold py-2 rounded-xl flex items-center justify-center gap-2 text-xs transition-colors"
-                >
-                  <ExternalLink className="w-4 h-4" /> Open in Google Maps
-                </a>
-              </div>
-            ) : (
-              <p className="text-xs text-textMuted italic">Locating client device...</p>
-            )}
-          </div>
+          {/* Interactive Google Map */}
+          <GoogleMapTracker
+            currentCoords={currentCoords}
+            gpsPath={alertData.gpsPath || []}
+            isDistress={true}
+            height="380px"
+            title="Real-Time Google Maps Distress Tracker"
+          />
 
           {/* Metadata Duration */}
           {alertData.durationSeconds > 0 && (

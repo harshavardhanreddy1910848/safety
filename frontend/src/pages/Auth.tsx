@@ -14,6 +14,10 @@ import {
   Camera,
   MapPin,
   Bell,
+  Key,
+  CheckCircle2,
+  ArrowLeft,
+  Send,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -105,29 +109,39 @@ const features = [
    Main Auth component
 ───────────────────────────────────────────── */
 export function Auth() {
-  const { login, register, resetPassword } = useApp();
+  const { login, register, sendResetCode, resetPassword } = useApp();
   const [showIntro, setShowIntro] = useState(true);
   const [isLogin, setIsLogin] = useState(true);
   const [isForgot, setIsForgot] = useState(false);
+  const [forgotStep, setForgotStep] = useState<'request' | 'verify'>('request');
   const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [codeSentMsg, setCodeSentMsg] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => setResendCooldown((c) => c - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCooldown]);
 
   if (showIntro) {
     return (
       <div className="relative flex flex-col w-full min-h-screen bg-[#0a0a0f] overflow-y-auto no-scrollbar text-white">
         <ParticleBg />
         
-        {/* Gradient orbs */}
         <div className="absolute -top-32 -left-32 w-72 h-72 rounded-full bg-red-600/20 blur-[80px] pointer-events-none" />
         <div className="absolute -bottom-20 -right-20 w-64 h-64 rounded-full bg-pink-600/15 blur-[80px] pointer-events-none" />
 
         <div className="relative z-10 flex flex-col flex-1 items-center justify-center px-6 py-10 w-full max-w-md mx-auto">
-          {/* Logo / Icon */}
           <motion.div
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -158,7 +172,6 @@ export function Auth() {
             Discreet Personal Safety Assistant
           </motion.p>
 
-          {/* Description Text */}
           <motion.div 
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
@@ -170,7 +183,6 @@ export function Auth() {
             </p>
           </motion.div>
 
-          {/* Features bullet points */}
           <motion.div 
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
@@ -195,7 +207,6 @@ export function Auth() {
             ))}
           </motion.div>
 
-          {/* Get Started Button */}
           <motion.button
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -214,29 +225,87 @@ export function Auth() {
   const switchTab = (toLogin: boolean) => {
     setIsLogin(toLogin);
     setIsForgot(false);
+    setForgotStep('request');
+    setCode('');
+    setCodeSentMsg(null);
     setError(null);
     setEmail('');
     setPassword('');
     setName('');
   };
 
+  const startForgotPassword = () => {
+    setIsForgot(true);
+    setForgotStep('request');
+    setCode('');
+    setCodeSentMsg(null);
+    setError(null);
+    setPassword('');
+  };
+
+  const handleSendCode = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!email || !email.trim()) {
+      setError('Please enter your email address to receive the verification code.');
+      return;
+    }
+    setError(null);
+    setSendingCode(true);
+    try {
+      await sendResetCode(email.trim());
+      setForgotStep('verify');
+      setCodeSentMsg(`Verification code sent to ${email.trim()}! Please check your Gmail inbox.`);
+      setResendCooldown(60);
+    } catch (err: any) {
+      setError(err.message || 'Failed to send verification code. Please check your email and try again.');
+    } finally {
+      setSendingCode(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setLoading(true);
 
-    try {
-      if (isForgot) {
-        await resetPassword(email, password);
+    if (isForgot) {
+      if (forgotStep === 'request') {
+        await handleSendCode();
+        return;
+      }
+
+      if (!code || code.trim().length !== 6) {
+        setError('Please enter the 6-digit verification code sent to your Gmail.');
+        return;
+      }
+      if (!password || password.length < 6) {
+        setError('New password must be at least 6 characters long.');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        await resetPassword(email.trim(), code.trim(), password);
         setSuccess(true);
         setTimeout(() => {
           setIsForgot(false);
+          setForgotStep('request');
           setIsLogin(true);
           setSuccess(false);
           setPassword('');
+          setCode('');
           setError(null);
         }, 2200);
-      } else if (isLogin) {
+      } catch (err: any) {
+        setError(err.message || 'Password reset failed. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (isLogin) {
         await login(email, password);
       } else {
         if (!name.trim()) throw new Error('Please enter your full name');
@@ -252,48 +321,33 @@ export function Auth() {
 
   return (
     <div className="relative flex flex-col w-full min-h-screen bg-[#0a0a0f] overflow-hidden text-white">
-      {/* Animated particle background */}
       <ParticleBg />
 
-      {/* Gradient orbs */}
       <div className="absolute -top-32 -left-32 w-72 h-72 rounded-full bg-red-600/20 blur-[80px] pointer-events-none" />
       <div className="absolute -bottom-20 -right-20 w-64 h-64 rounded-full bg-pink-600/15 blur-[80px] pointer-events-none" />
 
-      <div className="relative z-10 flex flex-col flex-1 items-center justify-center px-5 py-10 w-full max-w-md mx-auto">
-
-        {/* ── Logo / Hero ── */}
+      <div className="relative z-10 flex flex-col flex-1 items-center justify-center px-4 py-8 max-w-sm mx-auto w-full">
         <motion.div
-          initial={{ opacity: 0, y: -28 }}
+          initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: 'easeOut' }}
-          className="flex flex-col items-center mb-8 text-center"
+          transition={{ duration: 0.5 }}
+          className="flex flex-col items-center mb-6 text-center"
         >
-          {/* Animated shield */}
-          <div className="relative mb-4">
-            <motion.div
-              animate={{ scale: [1, 1.06, 1] }}
-              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
-              className="w-20 h-20 rounded-2xl bg-gradient-to-br from-red-600/30 to-pink-600/20 border border-red-500/30 flex items-center justify-center shadow-lg shadow-red-900/40"
-            >
-              <ShieldAlert className="w-10 h-10 text-red-400" />
-            </motion.div>
-            {/* Pulse ring */}
-            <motion.div
-              animate={{ scale: [1, 1.55], opacity: [0.4, 0] }}
-              transition={{ duration: 2, repeat: Infinity, ease: 'easeOut' }}
-              className="absolute inset-0 rounded-2xl border-2 border-red-500/40"
-            />
+          <div className="relative mb-3">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-red-600/40 to-pink-600/20 border border-red-500/30 flex items-center justify-center shadow-lg shadow-red-900/40">
+              <ShieldAlert className="w-7 h-7 text-red-400" />
+            </div>
+            <div className="absolute inset-0 rounded-2xl border border-red-500/40 animate-ping opacity-30" style={{ animationDuration: '3s' }} />
           </div>
 
-          <h1 className="text-4xl font-black tracking-tight bg-gradient-to-r from-white via-white to-red-300 bg-clip-text text-transparent">
+          <h1 className="text-2xl font-black tracking-tight text-white">
             SilentSOS
           </h1>
-          <p className="text-xs text-white/40 mt-1.5 font-medium tracking-wide">
-            WOMEN'S SAFETY & EMERGENCY ALERT
+          <p className="text-[11px] text-red-400/80 font-semibold tracking-widest uppercase mt-0.5">
+            Personal Safety Network
           </p>
 
-          {/* Feature badges */}
-          <div className="flex gap-2 mt-4 flex-wrap justify-center">
+          <div className="flex flex-wrap justify-center gap-1.5 mt-3">
             {features.map(({ icon: Icon, label }) => (
               <span
                 key={label}
@@ -306,7 +360,6 @@ export function Auth() {
           </div>
         </motion.div>
 
-        {/* ── Auth Card ── */}
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
@@ -314,18 +367,38 @@ export function Auth() {
           className="w-full"
         >
           <div className="relative bg-white/[0.04] backdrop-blur-md border border-white/10 rounded-3xl p-6 shadow-2xl overflow-hidden">
-            {/* Top glow line */}
             <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-red-500 to-transparent" />
 
-            {/* Tab switcher or Forgot password Header */}
             {isForgot ? (
-              <div className="text-center mb-6">
-                <h2 className="text-xl font-bold text-white">Reset Password</h2>
-                <p className="text-xs text-white/40 mt-1 font-medium">Enter your email and new password</p>
+              <div className="mb-5">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (forgotStep === 'verify') {
+                        setForgotStep('request');
+                      } else {
+                        setIsForgot(false);
+                      }
+                      setError(null);
+                    }}
+                    className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-colors cursor-pointer"
+                    title="Back"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+                  <h2 className="text-lg font-bold text-white">
+                    {forgotStep === 'request' ? 'Reset Password' : 'Enter Verification Code'}
+                  </h2>
+                </div>
+                <p className="text-xs text-white/50 font-medium">
+                  {forgotStep === 'request'
+                    ? 'Enter your email to receive a 6-digit verification code in Gmail.'
+                    : `Enter the code sent to ${email} and your new password.`}
+                </p>
               </div>
             ) : (
               <div className="relative flex bg-black/30 rounded-xl p-1 mb-6 border border-white/8">
-                {/* Sliding indicator */}
                 <motion.div
                   layout
                   className="absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-lg bg-gradient-to-br from-red-600 to-red-700 shadow-lg shadow-red-900/40"
@@ -353,7 +426,6 @@ export function Auth() {
               </div>
             )}
 
-            {/* Error banner */}
             <AnimatePresence>
               {error && (
                 <motion.div
@@ -371,7 +443,23 @@ export function Auth() {
               )}
             </AnimatePresence>
 
-            {/* Success banner */}
+            <AnimatePresence>
+              {isForgot && forgotStep === 'verify' && codeSentMsg && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden mb-4"
+                >
+                  <div className="bg-sky-500/10 border border-sky-500/25 text-sky-300 text-xs p-3 rounded-xl flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-sky-400" />
+                    <span>{codeSentMsg}</span>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             <AnimatePresence>
               {success && (
                 <motion.div
@@ -380,16 +468,17 @@ export function Auth() {
                   exit={{ height: 0, opacity: 0 }}
                   className="overflow-hidden mb-4"
                 >
-                  <div className="bg-green-500/10 border border-green-500/20 text-green-300 text-xs p-3 rounded-xl">
-                    {isForgot ? '✅ Password reset successful! Redirecting to login...' : '✅ Account created! Signing you in…'}
+                  <div className="bg-green-500/10 border border-green-500/20 text-green-300 text-xs p-3 rounded-xl flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 shrink-0 text-green-400" />
+                    <span>
+                      {isForgot ? 'Password reset successful! Redirecting to login...' : 'Account created! Signing you in…'}
+                    </span>
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
 
-            {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Name field (Sign Up only) */}
               <AnimatePresence initial={false}>
                 {!isLogin && !isForgot && (
                   <motion.div
@@ -418,7 +507,6 @@ export function Auth() {
                 )}
               </AnimatePresence>
 
-              {/* Email */}
               <div>
                 <label className="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">
                   Email Address
@@ -431,81 +519,154 @@ export function Auth() {
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@example.com"
                     required
+                    readOnly={isForgot && forgotStep === 'verify'}
                     autoComplete="email"
-                    className="w-full bg-black/30 border border-white/10 rounded-xl pl-9 pr-4 py-3 text-sm placeholder-white/20 focus:border-red-500/60 focus:ring-1 focus:ring-red-500/30 outline-none transition-all"
+                    className={`w-full bg-black/30 border border-white/10 rounded-xl pl-9 pr-4 py-3 text-sm placeholder-white/20 focus:border-red-500/60 focus:ring-1 focus:ring-red-500/30 outline-none transition-all ${
+                      isForgot && forgotStep === 'verify' ? 'opacity-80 cursor-not-allowed text-white/80' : ''
+                    }`}
                   />
-                </div>
-              </div>
-
-              {/* Password */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
-                    {isForgot ? 'New Password' : 'Password'}
-                  </label>
-                  {isLogin && !isForgot && (
+                  {isForgot && forgotStep === 'verify' && (
                     <button
                       type="button"
-                      onClick={() => setIsForgot(true)}
-                      className="text-[10px] text-red-400/70 hover:text-red-300 transition-colors"
+                      onClick={() => {
+                        setForgotStep('request');
+                        setCode('');
+                        setCodeSentMsg(null);
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-red-400 hover:text-red-300 underline font-medium"
                     >
-                      Forgot password?
+                      Change
                     </button>
                   )}
                 </div>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/25" />
-                  <input
-                    type={showPass ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    required
-                    autoComplete={isForgot ? 'new-password' : isLogin ? 'current-password' : 'new-password'}
-                    className="w-full bg-black/30 border border-white/10 rounded-xl pl-9 pr-10 py-3 text-sm placeholder-white/20 focus:border-red-500/60 focus:ring-1 focus:ring-red-500/30 outline-none transition-all"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPass((v) => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
-                  >
-                    {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
               </div>
 
-              {/* Submit button */}
-              <motion.button
-                type="submit"
-                disabled={loading}
-                whileTap={{ scale: 0.97 }}
-                className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl text-sm transition-all flex items-center justify-center gap-2 mt-2 shadow-lg shadow-red-900/40"
-              >
-                {loading ? (
-                  <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : isForgot ? (
-                  <><ShieldAlert className="w-4 h-4" /> Reset Password</>
-                ) : isLogin ? (
-                  <><LogIn className="w-4 h-4" /> Sign In to SilentSOS</>
-                ) : (
-                  <><UserPlus className="w-4 h-4" /> Create My Account</>
-                )}
-              </motion.button>
+              {isForgot && forgotStep === 'request' && (
+                <motion.button
+                  type="submit"
+                  disabled={sendingCode || !email.trim()}
+                  whileTap={{ scale: 0.97 }}
+                  className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl text-sm transition-all flex items-center justify-center gap-2 mt-2 shadow-lg shadow-red-900/40 cursor-pointer"
+                >
+                  {sendingCode ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Sending Verification Code...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      <span>Send Gmail Verification Code</span>
+                    </>
+                  )}
+                </motion.button>
+              )}
+
+              {isForgot && forgotStep === 'verify' && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
+                      6-Digit Verification Code
+                    </label>
+                    <button
+                      type="button"
+                      disabled={resendCooldown > 0 || sendingCode}
+                      onClick={() => handleSendCode()}
+                      className="text-[10px] text-red-400 hover:text-red-300 disabled:text-white/30 disabled:cursor-not-allowed transition-colors font-medium"
+                    >
+                      {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend Code'}
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-red-400/70" />
+                    <input
+                      type="text"
+                      maxLength={6}
+                      value={code}
+                      onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                      placeholder="123456"
+                      required
+                      autoFocus
+                      className="w-full bg-black/40 border border-red-500/40 focus:border-red-500 rounded-xl pl-9 pr-4 py-3 text-base tracking-[6px] font-mono placeholder:tracking-normal placeholder-white/20 focus:ring-1 focus:ring-red-500/40 outline-none transition-all text-white font-bold text-center"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {(!isForgot || forgotStep === 'verify') && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
+                      {isForgot ? 'New Password' : 'Password'}
+                    </label>
+                    {isLogin && !isForgot && (
+                      <button
+                        type="button"
+                        onClick={startForgotPassword}
+                        className="text-[10px] text-red-400/70 hover:text-red-300 transition-colors"
+                      >
+                        Forgot password?
+                      </button>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/25" />
+                    <input
+                      type={showPass ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      required
+                      minLength={6}
+                      autoComplete={isForgot ? 'new-password' : isLogin ? 'current-password' : 'new-password'}
+                      className="w-full bg-black/30 border border-white/10 rounded-xl pl-9 pr-10 py-3 text-sm placeholder-white/20 focus:border-red-500/60 focus:ring-1 focus:ring-red-500/30 outline-none transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPass((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
+                    >
+                      {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {(!isForgot || forgotStep === 'verify') && (
+                <motion.button
+                  type="submit"
+                  disabled={loading}
+                  whileTap={{ scale: 0.97 }}
+                  className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl text-sm transition-all flex items-center justify-center gap-2 mt-2 shadow-lg shadow-red-900/40 cursor-pointer"
+                >
+                  {loading ? (
+                    <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : isForgot ? (
+                    <><Key className="w-4 h-4" /> Verify & Reset Password</>
+                  ) : isLogin ? (
+                    <><LogIn className="w-4 h-4" /> Sign In to SilentSOS</>
+                  ) : (
+                    <><UserPlus className="w-4 h-4" /> Create My Account</>
+                  )}
+                </motion.button>
+              )}
             </form>
 
-            {/* Divider */}
             <div className="flex items-center gap-3 my-5">
               <div className="flex-1 h-px bg-white/8" />
               <span className="text-[10px] text-white/25 font-medium">OR</span>
               <div className="flex-1 h-px bg-white/8" />
             </div>
 
-            {/* Switch tab link */}
             <p className="text-center text-xs text-white/35">
               {isForgot ? (
                 <button
                   type="button"
-                  onClick={() => setIsForgot(false)}
+                  onClick={() => {
+                    setIsForgot(false);
+                    setForgotStep('request');
+                    setError(null);
+                  }}
                   className="text-red-400 font-semibold hover:text-red-300 transition-colors underline underline-offset-2"
                 >
                   Back to Sign In
@@ -537,7 +698,6 @@ export function Auth() {
           </div>
         </motion.div>
 
-        {/* Footer */}
         <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useApp } from '../AppContext';
 import {
   EyeOff,
@@ -9,12 +10,14 @@ import {
   Lock,
   CheckCircle2,
   ChevronRight,
+  User,
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export function Settings() {
   const { state, updateSettings, clearData, logout } = useApp();
+  const navigate = useNavigate();
 
   // Change PIN modal states
   const [showChangePinModal, setShowChangePinModal] = useState(false);
@@ -131,6 +134,32 @@ export function Settings() {
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
 
       <div className="space-y-6">
+        {/* User Account Profile Banner */}
+        <button
+          onClick={() => navigate('/profile')}
+          className="w-full bg-surface border border-surfaceHighlight hover:border-safe/40 rounded-2xl p-4 flex items-center justify-between transition-colors text-left group"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-black font-black text-base shadow-md">
+              {state.userName ? state.userName.substring(0, 2).toUpperCase() : <User className="w-6 h-6" />}
+            </div>
+            <div>
+              <p className="font-bold text-white text-base group-hover:text-safe transition-colors">
+                {state.userName || 'Safety User'}
+              </p>
+              <p className="text-xs text-textMuted font-mono">
+                {state.userEmail || 'harshavardhanreddy1910848@gmail.com'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-safe bg-safe/10 border border-safe/20 px-2 py-1 rounded-lg">
+              Manage Profile
+            </span>
+            <ChevronRight className="w-4 h-4 text-textMuted group-hover:text-safe transition-colors" />
+          </div>
+        </button>
+
         {/* Stealth & Disguise */}
         <section>
           <h2 className="text-xs font-bold text-textMuted uppercase mb-3 flex items-center">

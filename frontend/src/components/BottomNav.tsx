@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { Home, Camera, Folder, Users, Settings, History } from 'lucide-react';
+import { Home, Folder, Users, Settings, History, User } from 'lucide-react';
 import { useApp } from '../AppContext';
 export function BottomNav() {
   const { state } = useApp();
@@ -9,11 +9,6 @@ export function BottomNav() {
     to: '/',
     icon: Home,
     label: 'SOS'
-  },
-  {
-    to: '/gesture',
-    icon: Camera,
-    label: 'Gesture'
   },
   {
     to: '/evidence',
@@ -34,6 +29,11 @@ export function BottomNav() {
     to: '/settings',
     icon: Settings,
     label: 'Settings'
+  },
+  {
+    to: '/profile',
+    icon: User,
+    label: 'Profile'
   }];
 
   return (

@@ -9,6 +9,7 @@ import { Evidence } from './pages/Evidence';
 import { Contacts } from './pages/Contacts';
 import { History } from './pages/History';
 import { Settings } from './pages/Settings';
+import { Profile } from './pages/Profile';
 import { Receiver } from './pages/Receiver';
 import { Auth } from './pages/Auth';
 import { SetupPin } from './pages/SetupPin';
@@ -168,6 +169,16 @@ function AppContent() {
         <Navigate to="/onboarding" /> :
 
         <Settings />
+
+        } />
+
+      <Route
+        path="/profile"
+        element={
+        !state.isSetupComplete ?
+        <Navigate to="/onboarding" /> :
+
+        <Profile />
 
         } />
 

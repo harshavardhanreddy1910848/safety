@@ -4,7 +4,7 @@ import { useApp, API_BASE } from '../AppContext';
 import { useGeolocation } from '../hooks/useGeolocation';
 import {
   ShieldAlert, MapPin, Camera, Mic, Video, EyeOff,
-  ExternalLink, CheckCircle2, X, Square, Circle, ChevronDown, ChevronUp, Map as MapIcon,
+  ExternalLink, CheckCircle2, X, Square, Circle, ChevronDown, ChevronUp, Map as MapIcon, User,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GoogleMapTracker } from '../components/GoogleMapTracker';
@@ -288,11 +288,22 @@ export function Dashboard() {
           <ShieldAlert className="w-6 h-6 text-safe mr-2" />
           <span className="font-bold text-safe">System Armed</span>
         </div>
-        <button
-          onClick={() => updateSettings({ stealthMode: !state.settings.stealthMode })}
-          className={`p-2 rounded-full transition-colors ${state.settings.stealthMode ? 'bg-emergency/20 text-emergency' : 'bg-surface text-textMuted'}`}>
-          <EyeOff className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => updateSettings({ stealthMode: !state.settings.stealthMode })}
+            className={`p-2 rounded-full transition-colors ${state.settings.stealthMode ? 'bg-emergency/20 text-emergency' : 'bg-surface text-textMuted hover:text-white'}`}
+            title="Toggle Stealth Mode">
+            <EyeOff className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => navigate('/profile')}
+            className="p-1.5 rounded-full bg-surface border border-surfaceHighlight text-safe hover:border-safe/50 flex items-center justify-center transition-colors"
+            title="My Profile">
+            <div className="w-6 h-6 rounded-full bg-safe/20 text-safe font-bold text-xs flex items-center justify-center">
+              {state.userName ? state.userName.substring(0, 1).toUpperCase() : <User className="w-3.5 h-3.5" />}
+            </div>
+          </button>
+        </div>
       </div>
 
       {/* SOS Button */}

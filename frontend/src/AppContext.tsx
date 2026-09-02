@@ -36,6 +36,8 @@ const defaultSettings: Settings = {
 const initialState: AppState = {
   isSetupComplete: false,
   userName: '',
+  userEmail: '',
+  userId: '',
   userRole: 'user',
   contacts: [],
   settings: defaultSettings,
@@ -53,7 +55,7 @@ type AppContextType = {
   sendResetCode: (email: string) => Promise<void>;
   resetPassword: (email: string, code: string, password: string) => Promise<void>;
   logout: () => void;
-  updateUser: (name: string) => Promise<void>;
+  updateUser: (name: string, password?: string) => Promise<void>;
   addContact: (contact: Contact) => Promise<void>;
   updateContact: (id: string, contact: Partial<Contact>) => Promise<void>;
   removeContact: (id: string) => Promise<void>;
@@ -155,6 +157,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setState({
           isSetupComplete: data.user.isSetupComplete,
           userName: data.user.name,
+          userEmail: data.user.email,
+          userId: data.user.id,
           userRole: data.user.role || 'user',
           contacts: data.contacts,
           settings: data.settings,
@@ -262,20 +266,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
 
-  const updateUser = async (name: string) => {
+  const updateUser = async (name: string, password?: string) => {
     setState((s) => ({ ...s, userName: name }));
     if (!token) return;
     try {
-      await fetch(`${API_BASE}/user`, {
+      const res = await fetch(`${API_BASE}/user`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ name })
+        body: JSON.stringify({ name, password })
       });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Failed to update user profile');
+      }
     } catch (e) {
       console.error('Failed to update user profile:', e);
+      throw e;
     }
   };
 

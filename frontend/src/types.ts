@@ -52,6 +52,8 @@ export type AlertEvent = {
 export type AppState = {
   isSetupComplete: boolean;
   userName: string;
+  userEmail?: string;
+  userId?: string;
   userRole?: 'user' | 'admin';
   contacts: Contact[];
   settings: Settings;

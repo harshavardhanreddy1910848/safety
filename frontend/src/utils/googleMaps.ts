@@ -1,7 +1,7 @@
 let googleMapsPromise: Promise<any> | null = null;
 
 export const GOOGLE_MAPS_API_KEY =
-  import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyBOK1eu9K1eYI1z2ssm7FGLkA37ItVG9lQ';
+  import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 export function loadGoogleMaps(): Promise<any> {
   if (typeof window !== 'undefined' && (window as any).google && (window as any).google.maps) {
@@ -13,6 +13,11 @@ export function loadGoogleMaps(): Promise<any> {
   }
 
   googleMapsPromise = new Promise((resolve, reject) => {
+    if (!GOOGLE_MAPS_API_KEY) {
+      reject(new Error('VITE_GOOGLE_MAPS_API_KEY not configured'));
+      return;
+    }
+
     const existingScript = document.getElementById('google-maps-script');
     if (existingScript) {
       if ((window as any).google && (window as any).google.maps) {
@@ -26,7 +31,7 @@ export function loadGoogleMaps(): Promise<any> {
 
     const script = document.createElement('script');
     script.id = 'google-maps-script';
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=places,geometry`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&v=weekly`;
     script.async = true;
     script.defer = true;
 

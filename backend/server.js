@@ -695,6 +695,29 @@ app.get('/api/debug/mail', (req, res) => {
   });
 });
 
+// Standalone Health Check Endpoint
+app.get('/api/health', async (req, res) => {
+  try {
+    await db.getSettings('global');
+    res.json({
+      status: 'ok',
+      service: 'SilentSOS Standalone API',
+      timestamp: new Date().toISOString(),
+      uptime: Math.round(process.uptime()),
+      database: 'connected',
+      activeSos: !!activeAlert
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: 'degraded',
+      service: 'SilentSOS Standalone API',
+      timestamp: new Date().toISOString(),
+      database: 'disconnected',
+      error: err.message
+    });
+  }
+});
+
 // Authentication Middleware
 async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];

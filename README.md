@@ -1,168 +1,218 @@
-# SilentSOS - Womens Safety Platform
+# SilentSOS — Standalone Real-Time Distress Tracking & Women's Safety Platform
 
-SilentSOS is a modern web application designed to facilitate real-time safety distress tracking, evidence collection (photos, video, and audio), and instant emergency notifications. 
+SilentSOS is a modern, production-ready web application designed for real-time safety distress tracking, evidence collection (photos, video, and audio capture), live GPS path visualization with Google Maps, and instant multi-channel emergency notifications (Email & SMS).
 
-The platform has been migrated permanently from SQLite to **PostgreSQL**.
-
----
-
-## Tech Stack & Architecture
-
-- **Frontend**: React, Vite, TailwindCSS, TypeScript
-- **Backend**: Node.js, Express, WebSocket (ws)
-- **Database**: PostgreSQL (Single source of truth)
-- **Email Notifications**: Nodemailer (SMTP Gateway)
+The application is fully **self-contained and platform-independent**. It can be run locally on any machine, containerized using Docker, or deployed to any VPS/cloud provider without dependency on external hosted platforms.
 
 ---
 
-## Getting Started
+## 🌟 Key Features
+
+- **🚨 Instant Distress Trigger**: Single-click SOS activation with GPS coordinates, continuous breadcrumb location tracking, and auto-dispatch to emergency contacts.
+- **🛰️ Live Google Maps Visualization**: Real-time distress radar marker, breadcrumb GPS path, and direct navigation links for responders.
+- **📷 Covert Evidence Recording**: Automatic photo burst, video capture, and microphone recording securely encrypted and uploaded to the server.
+- **✉️ Automated Multi-Channel Dispatch**: Emergency alert emails via SMTP (Nodemailer/Gmail) with attached evidence files, plus optional SMS dispatch.
+- **🛡️ Industry-Standard Authentication**: HMAC-SHA256 JWT tokens with automatic expiry, PBKDF2 salted password hashing, and brute-force rate limiting.
+- **👥 Emergency Contact Network**: Manage contacts with AES-256-CBC encrypted phone and email storage.
+- **📊 Administrator Oversight Portal**: Secure admin dashboard with live alert monitoring, user account management, exportable audit reports, and global alert settings.
+- **📱 Standalone Single-Process Architecture**: In production, the backend server directly serves both the REST API and the compiled React Single Page App from port 3001.
+
+---
+
+## 🏗️ Technology Stack
+
+| Layer | Technologies |
+| :--- | :--- |
+| **Frontend** | React 18, Vite 5, TypeScript, TailwindCSS, Lucide Icons, Framer Motion, React Router |
+| **Backend** | Node.js (ES Modules), Express, WebSocket (`ws`), Multer, Nodemailer |
+| **Database** | PostgreSQL (Neon Cloud Serverless or direct PostgreSQL connection pooling) |
+| **Mapping & Location** | Google Maps JavaScript API with responsive dark mode styles & embed fallback |
+| **Deployment** | Docker, Docker Compose, Node.js standalone runtime |
+
+---
+
+## 🚀 Getting Started
 
 ### Prerequisites
 
-- Node.js (v18+ recommended)
-- A running PostgreSQL database instance (local or hosted, e.g., Neon / Supabase)
+- **Node.js**: v18+ (v20 LTS recommended)
+- **Package Manager**: `npm` (v9+)
+- **Database**: PostgreSQL database (e.g. [Neon](https://neon.tech), Supabase, or a local PostgreSQL instance)
+- **Google Maps API Key**: For interactive satellite tracking and directions (obtainable from Google Cloud Console)
 
-### Backend Configuration
+---
 
-1. Navigate to the `backend/` directory.
-2. Create/update the `.env` file using the template in `.env.example`:
-   
-   ```env
-   PORT=3001
-   
-   # SMTP Email Configuration
-   SMTP_HOST=smtp.gmail.com
-   SMTP_PORT=465
-   SMTP_USER=your_email@gmail.com
-   SMTP_PASS=your_app_password
-   
-   # PostgreSQL Configuration
-   DATABASE_URL=postgresql://user:password@host:port/database_name?sslmode=require
-   # OR individual connection details:
-   PGHOST=localhost
-   PGPORT=5432
-   PGDATABASE=silentsos
-   PGUSER=postgres
-   PGPASSWORD=your_password
-   ```
+### Method 1: Local Node.js Development (Recommended)
 
-3. Install dependencies:
+1. **Clone the Repository**:
    ```bash
-   npm install
+   git clone https://github.com/harshavardhanreddy1910848/safety.git
+   cd safety
    ```
 
-4. Start the backend server:
+2. **Install All Dependencies**:
+   ```bash
+   npm run install:all
+   ```
+
+3. **Configure Environment Variables**:
+   Copy `.env.example` to `backend/.env` (and optionally `frontend/.env`):
+   ```bash
+   cp .env.example backend/.env
+   cp frontend/.env.example frontend/.env
+   ```
+   Fill in your PostgreSQL `DATABASE_URL` and `VITE_GOOGLE_MAPS_API_KEY`.
+
+4. **Start Development Servers (Hot Reloading)**:
    ```bash
    npm run dev
    ```
-   *Note: On server startup, the database schema (tables: `users`, `contacts`, `settings`, `history`) will be initialized automatically if they do not exist.*
-
-### Frontend Configuration
-
-1. Navigate to the `frontend/` directory.
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Start the Vite dev server:
-   ```bash
-   npm run dev
-   ```
+   - **Frontend**: Accessible at `http://localhost:5173` (with built-in proxy to backend)
+   - **Backend API**: Accessible at `http://localhost:3001`
 
 ---
 
-## Database Migration (SQLite to PostgreSQL)
+### Method 2: Standalone Production Mode (Single Process)
 
-If you are migrating existing data from an older SQLite installation:
+In production mode, the backend compiles and serves the frontend as static assets:
 
-1. Ensure your SQLite database file (`database.db`) is located at `backend/data/database.db`.
-2. Configure your target PostgreSQL connection details in `backend/.env`.
-3. Temporarily install the sqlite3 package:
+1. **Build the Production Frontend**:
    ```bash
-   npm install sqlite3 --no-save
+   npm run build
    ```
-4. Run the programmatic migration script:
+
+2. **Start the Standalone Server**:
    ```bash
-   node backend/migrate.js
+   npm start
    ```
-5. Prune/remove the SQLite dependency when finished:
-   ```bash
-   npm uninstall sqlite3
-   ```
+   The complete application (UI + API + WebSockets) will be live at:
+   👉 **`http://localhost:3001`**
 
 ---
 
-## Database Schema (PostgreSQL)
+### Method 3: 1-Command Docker Deployment
 
-The database schema is defined as:
+You can build and launch the standalone containerized application with Docker Compose:
 
-### 1. `users` Table
-Stores user profile information and credentials.
-- `id` (VARCHAR PRIMARY KEY)
-- `email` (VARCHAR UNIQUE)
-- `password_hash` (VARCHAR)
-- `name` (VARCHAR)
-- `role` (VARCHAR)
-- `disabled` (BOOLEAN DEFAULT FALSE)
-- `is_setup_complete` (BOOLEAN DEFAULT FALSE)
+1. Create your `.env` file in the root directory:
+   ```bash
+   cp .env.example .env
+   ```
 
-### 2. `settings` Table
-Stores notification, capture, and system preferences.
-- `user_id` (VARCHAR PRIMARY KEY)
-- `gesture_sensitivity` (VARCHAR)
-- `auto_repeat_interval` (INTEGER)
-- `photo_burst_count` (INTEGER)
-- `video_duration` (VARCHAR)
-- `audio_quality` (VARCHAR)
-- `camera_preference` (VARCHAR)
-- `fake_call_disguise` (BOOLEAN DEFAULT FALSE)
-- `stealth_mode` (BOOLEAN DEFAULT FALSE)
-- `message_template` (TEXT)
-- `safety_pin` (VARCHAR)
-- `auto_delete_days` (INTEGER)
-- `global_emergency_emails` (TEXT)
+2. Run with Docker Compose:
+   ```bash
+   docker-compose up -d --build
+   ```
 
-### 3. `contacts` Table
-Stores user emergency contacts.
-- `id` (VARCHAR PRIMARY KEY)
-- `user_id` (VARCHAR REFERENCES users(id) ON DELETE CASCADE)
-- `name` (VARCHAR)
-- `phone_enc` (TEXT) - Encrypted using AES-256-CBC
-- `email_enc` (TEXT) - Encrypted using AES-256-CBC
-- `preferences` (JSONB) - Channel notification preferences
-
-### 4. `history` Table
-Stores recorded distress alerts and attached evidence.
-- `id` (VARCHAR PRIMARY KEY)
-- `user_id` (VARCHAR)
-- `timestamp` (BIGINT) - Unix epoch millisecond timestamp
-- `type` (VARCHAR)
-- `duration_seconds` (INTEGER)
-- `status` (VARCHAR)
-- `evidence` (JSONB) - Evidence counts and list of file links
-- `contacts_notified` (JSONB) - Logs of message channels notified
-- `gps_path_enc` (TEXT) - Encrypted JSON tracking coordinates
+3. Check health and logs:
+   ```bash
+   docker-compose ps
+   docker-compose logs -f
+   ```
+   The application will be running at `http://localhost:3001`.
 
 ---
 
-## PostgreSQL Backup and Restore Commands
+## ⚙️ Environment Variables Reference
 
-### Backup (Dump) Database
-To create a complete backup of your database:
+| Variable | Description | Default / Example |
+| :--- | :--- | :--- |
+| `PORT` | HTTP & WebSocket server port | `3001` |
+| `NODE_ENV` | Application environment | `production` / `development` |
+| `FRONTEND_URL` | Base URL used in dispatched email links | `http://localhost:3001` |
+| `APP_URL` | Server URL for media links | `http://localhost:3001` |
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@host/db?sslmode=require` |
+| `JWT_SECRET` | Secret key for signing HMAC-SHA256 JWT tokens | *(Random secure string)* |
+| `JWT_EXPIRES_IN` | Token expiration duration in seconds | `604800` (7 days) |
+| `ENCRYPTION_SECRET` | 32-byte secret key for AES-256-CBC PII encryption | *(Random secure string)* |
+| `SMTP_HOST` | Outgoing email SMTP server | `smtp.gmail.com` |
+| `SMTP_PORT` | SMTP port | `465` (SSL) or `587` (TLS) |
+| `SMTP_USER` | SMTP username / sender email | `your_email@gmail.com` |
+| `SMTP_PASS` | SMTP password or Gmail App Password | `xxxx xxxx xxxx xxxx` |
+| `FAST2SMS_API_KEY` | Optional Fast2SMS API key for India SMS | *(Optional)* |
+| `VITE_GOOGLE_MAPS_API_KEY` | Google Maps JavaScript API key | `AIzaSy...` |
+
+---
+
+## 🗄️ Database Architecture & Schema
+
+The PostgreSQL database initializes all tables automatically upon startup (`initDb()`):
+
+1. **`users`**: User profiles, credentials, address, blood group, parent details, roles (`user`, `admin`), account status.
+2. **`settings`**: User safety PIN, auto-delete durations, sensitivity thresholds, custom message templates, global responder emails.
+3. **`contacts`**: Emergency contacts with AES-256-CBC encrypted phone (`phone_enc`) and email (`email_enc`), notification preferences (`JSONB`).
+4. **`history`**: Logged distress events, duration, status, encrypted GPS route (`gps_path_enc`), attached evidence files (`JSONB`).
+5. **`sos_locations`**: Granular coordinates recorded during active distress events with timestamps.
+6. **`sos_notifications`**: Delivery audit trail for each notification channel (`sms`, `email`, `whatsapp`).
+7. **`evidence_metadata`**: Record of stored media files (type, size, path, MIME type).
+8. **`password_resets`**: 6-digit verification codes for secure password reset with 10-minute expiry.
+9. **`audit_logs`**: System security and administration activity logs.
+
+---
+
+## 🧪 Testing & Verification
+
+Run the built-in HTTP and database integration test suite:
 ```bash
-pg_dump -U <username> -h <host> -p <port> -d <database_name> -F c -b -v -f silentsos_backup.dump
+npm test
 ```
-If using a connection URL:
+Or run the full end-to-end simulation:
 ```bash
-pg_dump "postgresql://user:password@host:port/database_name?sslmode=require" -F c -b -v -f silentsos_backup.dump
+npm run test:e2e
 ```
 
-### Restore Database
-To restore the backup into a clean database:
+### Health Check Endpoint
+Query the live server status at any time:
 ```bash
-pg_restore -U <username> -h <host> -p <port> -d <database_name> -c --if-exists -v silentsos_backup.dump
+curl http://localhost:3001/api/health
 ```
-If using a connection URL:
-```bash
-pg_restore --clean --if-exists -d "postgresql://user:password@host:port/database_name?sslmode=require" -v silentsos_backup.dump
+**Response:**
+```json
+{
+  "status": "ok",
+  "service": "SilentSOS Standalone API",
+  "timestamp": "2026-09-04T13:00:00.000Z",
+  "uptime": 120,
+  "database": "connected",
+  "activeSos": false
+}
 ```
+
+---
+
+## 📦 Production Deployment Guide
+
+### Deploying to Any Linux VPS (Ubuntu / Debian)
+1. Install Node.js 20 and Git:
+   ```bash
+   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+   sudo apt-get install -y nodejs git
+   ```
+2. Clone repository and install dependencies:
+   ```bash
+   git clone https://github.com/harshavardhanreddy1910848/safety.git /var/www/silentsos
+   cd /var/www/silentsos
+   npm run install:all
+   ```
+3. Set up environment file:
+   ```bash
+   cp .env.example backend/.env
+   nano backend/.env
+   ```
+4. Build frontend:
+   ```bash
+   npm run build
+   ```
+5. Run using PM2 (Process Manager):
+   ```bash
+   sudo npm install -g pm2
+   pm2 start backend/server.js --name silentsos
+   pm2 startup
+   pm2 save
+   ```
+6. (Optional) Configure Nginx as reverse proxy with SSL via Let's Encrypt Certbot.
+
+---
+
+## 📄 License
+This project is private and maintained for personal safety applications.

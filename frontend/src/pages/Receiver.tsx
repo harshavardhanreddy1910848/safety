@@ -24,7 +24,7 @@ export function Receiver() {
   useEffect(() => {
     async function loadAlert() {
       try {
-        const res = await fetch(`${API_BASE}/api/alerts/${alertId}`);
+        const res = await fetch(`${API_BASE}/alerts/${alertId}`);
         if (res.ok) {
           const data = await res.json();
           setAlertData(data);

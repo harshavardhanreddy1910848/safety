@@ -1,15 +1,17 @@
 {
-  "name": "silentsos-workspace",
+  "name": "silentsos-app",
   "version": "1.0.0",
   "private": true,
+  "description": "SilentSOS - Standalone Real-Time Distress Tracking & Women's Safety Platform",
   "scripts": {
     "install:all": "npm install && npm install --prefix frontend && npm install --prefix backend",
-    "build:frontend": "npm run build --prefix frontend",
-    "build": "npm run install:all && npm run build:frontend",
+    "build": "npm run build --prefix frontend",
     "start": "node backend/server.js",
     "dev:frontend": "npm run dev --prefix frontend",
     "dev:backend": "npm run dev --prefix backend",
-    "dev": "npx concurrently --kill-others \"npm run dev:backend\" \"npm run dev:frontend\""
+    "dev": "npx concurrently --kill-others -n \"BACKEND,FRONTEND\" -c \"cyan,magenta\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "test": "node backend/test-api-http.js",
+    "test:e2e": "node backend/test-neon-e2e.js"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

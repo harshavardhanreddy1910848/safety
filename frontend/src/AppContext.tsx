@@ -331,7 +331,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addContact = async (contact: Contact) => {
     setState((s) => ({
       ...s,
-      contacts: [...s.contacts, contact].slice(0, 3)
+      contacts: [...s.contacts, contact].slice(0, 5)
     }));
     if (!token) return;
     try {
